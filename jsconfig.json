@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "jsx": "preserve",
+    "strict": false,
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    // 👇 新增这一行，添加 vue 类型
+    "types": ["vite/client", "vue"]
+  },
+  "include": [
+    "src/**/*",
+    "src/auto-imports.d.ts",
+    "src/components.d.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

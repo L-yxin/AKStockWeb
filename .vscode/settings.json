@@ -1,0 +1,9 @@
+{
+  "js/ts.suggest.autoImports": true,
+  "editor.quickSuggestions": {
+    "strings": true
+  },
+  "vue.inlayHints.missingProps": true,
+  "vue.inlayHints.inlineHandlerLeadingButton": true,
+  "vueCompilerOptions.experimentalTemplateLanguageService": true
+}
