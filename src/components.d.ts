@@ -39,8 +39,13 @@ declare module 'vue' {
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     Home: typeof import('./components/home.vue')['default']
     KLineView: typeof import('./views/kLineView.vue')['default']
+    ParamsEditDialog: typeof import('./components/ParamsEditDialog.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SelectionDeviceView: typeof import('./views/SelectionDeviceView.vue')['default']
+    SettingsDrawer: typeof import('./components/SettingsDrawer.vue')['default']
+    TechnicalIndicatorsDrawer: typeof import('./components/TechnicalIndicatorsDrawer.vue')['default']
+    TradingPanel: typeof import('./components/TradingPanel.vue')['default']
+    TradingSignalsDrawer: typeof import('./components/TradingSignalsDrawer.vue')['default']
   }
 }

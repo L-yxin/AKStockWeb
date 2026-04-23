@@ -28,7 +28,9 @@ export default defineConfig({
         'src/composables/**',
         'src/utils/**',
         'src/stores/**',
-        'src/api/**'
+        'src/api/**',
+        "src/**/*.js",
+        "src/**/*.vue"
       ],
       dts: 'src/auto-imports.d.ts',
     }),

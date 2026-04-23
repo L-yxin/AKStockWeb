@@ -6,6 +6,7 @@
 // biome-ignore lint: disable
 export {}
 declare global {
+  const DEFAULT_PARAMS: typeof import('./constants/indicatorDefaults.js').DEFAULT_PARAMS
   const EffectScope: typeof import('vue').EffectScope
   const ElMessage: typeof import('element-plus/es').ElMessage
   const acceptHMRUpdate: typeof import('pinia').acceptHMRUpdate
@@ -58,6 +59,7 @@ declare global {
   const readonly: typeof import('vue').readonly
   const ref: typeof import('vue').ref
   const resolveComponent: typeof import('vue').resolveComponent
+  const router: typeof import('./router/index.js').default
   const setActivePinia: typeof import('pinia').setActivePinia
   const setMapStoreSuffix: typeof import('pinia').setMapStoreSuffix
   const shallowReactive: typeof import('vue').shallowReactive
@@ -74,13 +76,17 @@ declare global {
   const useCssModule: typeof import('vue').useCssModule
   const useCssVars: typeof import('vue').useCssVars
   const useId: typeof import('vue').useId
+  const useKLineChart: typeof import('./composables/useKLineChart.js').useKLineChart
   const useLink: typeof import('vue-router').useLink
   const useModel: typeof import('vue').useModel
   const useRoute: typeof import('vue-router').useRoute
   const useRouter: typeof import('vue-router').useRouter
   const useSearchParametersStore: typeof import('./stores/searchParameters.js').useSearchParametersStore
+  const useSettings: typeof import('./composables/useSettings.js').useSettings
   const useSlots: typeof import('vue').useSlots
+  const useTechnicalIndicators: typeof import('./composables/useTechnicalIndicators.js').useTechnicalIndicators
   const useTemplateRef: typeof import('vue').useTemplateRef
+  const useTradingSignals: typeof import('./composables/useTradingSignals.js').useTradingSignals
   const watch: typeof import('vue').watch
   const watchEffect: typeof import('vue').watchEffect
   const watchPostEffect: typeof import('vue').watchPostEffect
