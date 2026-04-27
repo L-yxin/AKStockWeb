@@ -1,26 +1,49 @@
 <template>
   <div id="chart" class="chart"></div>
-  <div ref="follower" class="follower"></div>
-  <div
-      v-if="currentKline"
-      class="kline-tooltip"
-      :style="{ left: tooltipPos.x + 'px', top: tooltipPos.y + 'px' }"
-    >
-      <div>时间：{{ new Date(currentKline.timestamp) }}</div>
-      <div>开：{{ currentKline.open }}</div>
-      <div>高：{{ currentKline.high }}</div>
-      <div>低：{{ currentKline.low }}</div>
-      <div>收：{{ currentKline.close }}</div>
-      <div>量：{{ currentKline.volume }}</div>
-    </div>
+  <div ref="unifiedTooltip" class="unified-tooltip" v-show="tooltipVisible"
+    :style="{ left: tooltipPos.x + 'px', top: tooltipPos.y + 'px' }">
+    <!-- K线部分（有值才显示） -->
+    <template v-if="currentKline">
+      <div class="tooltip-header">{{ formatDateTime(currentKline.timestamp) }}</div>
+      <div class="tooltip-row">
+        <span class="label">开</span>
+        <span class="value" :class="klineChangeClass(currentKline.open, currentKline.preClose)">{{ currentKline.open
+          }}</span>
+      </div>
+      <div class="tooltip-row">
+        <span class="label">高</span>
+        <span class="value high-low">{{ currentKline.high }}</span>
+      </div>
+      <div class="tooltip-row">
+        <span class="label">低</span>
+        <span class="value high-low">{{ currentKline.low }}</span>
+      </div>
+      <div class="tooltip-row">
+        <span class="label">收</span>
+        <span class="value" :class="klineChangeClass(currentKline.close, currentKline.preClose)">{{ currentKline.close
+          }}</span>
+      </div>
+      <div class="tooltip-row">
+        <span class="label">量</span>
+        <span class="value volume">{{ formatVolume(currentKline.volume) }}</span>
+      </div>
+    </template>
+
+    <!-- 交易信号部分 -->
+    <template v-if="tooltipMessages.length > 0">
+      <div class="tooltip-divider" v-if="currentKline"></div>
+      <div class="tooltip-signal" v-for="(msg, idx) in tooltipMessages" :key="idx">
+        • {{ msg }}
+      </div>
+    </template>
+  </div>
 </template>
 
 <script setup>
-import { init, dispose, registerOverlay,registerIndicator } from 'klinecharts'
+import { init, dispose, registerOverlay, registerIndicator } from 'klinecharts'
 import { RSI } from 'technicalindicators'
 import { ws_kline_url } from '@/api'
-const currentKline = ref(null)      // 当前K线数据
-const tooltipPos = ref({ x: 0, y: 0 })
+
 // ==================== Pinia Store ====================
 const searchStore = useSearchParametersStore()
 
@@ -47,7 +70,29 @@ function normalizeToKLineData(item) {
     volume: item.volume,
   }
 }
+const unifiedTooltip = ref(null)
+const tooltipVisible = ref(false)
+const tooltipMessages = ref([]) // 当前日期对应的交易信号消息列表
+const tooltipPos = ref({ x: 0, y: 0 })
+let currentKline = ref(null)
 
+// 格式化函数（与之前高质感版本相同）
+function formatDateTime(timestamp) {
+  if (!timestamp) return ''
+  const date = new Date(timestamp)
+  const pad = (n) => n.toString().padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+function formatVolume(vol) {
+  if (vol >= 1e9) return (vol / 1e9).toFixed(2) + 'B'
+  if (vol >= 1e6) return (vol / 1e6).toFixed(2) + 'M'
+  if (vol >= 1e3) return (vol / 1e3).toFixed(2) + 'K'
+  return vol.toString()
+}
+function klineChangeClass(current, prevClose) {
+  if (prevClose === undefined || prevClose === null) return ''
+  return current >= prevClose ? 'up' : 'down'
+}
 function timestampToDateStr(timestampMs) {
   if (!timestampMs || isNaN(timestampMs) || timestampMs <= 0) return null
   const date = new Date(timestampMs)
@@ -328,19 +373,41 @@ function clearAllMarkers(chartInstance) {
   chartInstance.removeOverlay()
   if (follower.value) follower.value.style.display = 'none'
 }
-function crosshairHandler (event) {
+function crosshairHandler(event) {
+  if (!event) {
+    tooltipVisible.value = false
+    return
+  }
   const { x, y, paneId } = event
-  if (paneId !== 'candle_pane') return
+  if (paneId !== 'candle_pane') {
+    tooltipVisible.value = false
+    return
+  }
+
+  if (!chart.value) return
 
   const result = chart.value.convertFromPixel({ x, y })
-  if (!result || result.dataIndex == null) return
+  if (!result || result.dataIndex == null) {
+    tooltipVisible.value = false
+    return
+  }
 
   const dataList = chart.value.getDataList()
   const kline = dataList[result.dataIndex]
-  if (!kline) return
+  if (!kline) {
+    tooltipVisible.value = false
+    return
+  }
 
   currentKline.value = kline
   tooltipPos.value = { x: x + 15, y: y + 15 }
+
+  // 获取该时间戳的交易信号消息
+  const ts = kline.timestamp
+  const messages = mesMap.get(ts) || []
+  tooltipMessages.value = messages
+
+  tooltipVisible.value = true
 }
 function disableCrosshair() {
   const chart = klineRef.value?.chart
@@ -447,7 +514,7 @@ const initChart = () => {
         if (!currentLatestDate) return
         const today = todayStr()
         const nextDate = addDays(currentLatestDate, 1)
-        if (nextDate>= searchStore.endDate) return
+        if (nextDate >= searchStore.endDate) return
         if (!nextDate || nextDate > today) return
         try {
           const newBars = await fetchHistoryData(symbol, period, nextDate, today)
@@ -513,33 +580,54 @@ defineExpose({ addMarkers, clearAllMarkers, chart })
   height: 100%;
 }
 
-.follower {
+.unified-tooltip {
   position: fixed;
-  background: rgba(0, 0, 0, 0.85);
-  color: #fff;
-  padding: 10px 16px;
-  box-sizing: border-box;
-  border-radius: 8px;
-  font-size: 14px;
+  background: rgba(20, 22, 28, 0.92);
+  backdrop-filter: blur(6px);
+  color: #e0e0e0;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.7;
   pointer-events: none;
   z-index: 9999;
-  transform: translate(20px, -50%);
-  white-space: pre-line;
-  line-height: 1.6;
-  border-left: 4px solid #00b828;
-  display: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+  min-width: 140px;
 }
+.tooltip-header {
+  font-size: 11px;
+  color: #aaa;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+}
+.tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  margin: 3px 0;
+}
+.label {
+  opacity: 0.6;
+  margin-right: 12px;
+}
+.value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.up { color: #ef4444; }
+.down { color: #22c55e; }
+.high-low { color: #e0e0e0; }
+.volume { color: #9aa0a6; }
 
-
-.kline-tooltip {
-  position: fixed;          /* 使用 fixed 避免被图表遮挡 */
-  background: rgba(0,0,0,0.75);
-  color: #fff;
-  padding: 6px 10px;
-  border-radius: 4px;
+.tooltip-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.1);
+  margin: 8px 0;
+}
+.tooltip-signal {
   font-size: 12px;
-  line-height: 1.6;
-  pointer-events: none;    /* 鼠标可穿透浮窗 */
-  z-index: 9999;
+  color: #ffd54f;
+  line-height: 1.5;
 }
 </style>
