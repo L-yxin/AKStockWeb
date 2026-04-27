@@ -1,13 +1,26 @@
 <template>
   <div id="chart" class="chart"></div>
   <div ref="follower" class="follower"></div>
+  <div
+      v-if="currentKline"
+      class="kline-tooltip"
+      :style="{ left: tooltipPos.x + 'px', top: tooltipPos.y + 'px' }"
+    >
+      <div>时间：{{ new Date(currentKline.timestamp) }}</div>
+      <div>开：{{ currentKline.open }}</div>
+      <div>高：{{ currentKline.high }}</div>
+      <div>低：{{ currentKline.low }}</div>
+      <div>收：{{ currentKline.close }}</div>
+      <div>量：{{ currentKline.volume }}</div>
+    </div>
 </template>
 
 <script setup>
 import { init, dispose, registerOverlay,registerIndicator } from 'klinecharts'
 import { RSI } from 'technicalindicators'
 import { ws_kline_url } from '@/api'
-
+const currentKline = ref(null)      // 当前K线数据
+const tooltipPos = ref({ x: 0, y: 0 })
 // ==================== Pinia Store ====================
 const searchStore = useSearchParametersStore()
 
@@ -139,7 +152,7 @@ registerOverlay({
     const type = overlay.extendData
     const offsetIndex = point.offsetIndex || 0
     const total = point.totalInGroup || 1
-    const direction = point.direction || 1
+    const direction = point.direction || 2.5
 
     const centerX = coordinates[0].x
     const baseY = coordinates[0].y
@@ -151,9 +164,9 @@ registerOverlay({
 
     const baseStartDistance = 70;
     const baseEndDistance = 10;
-    const extraOffset = -15; // 额外移动的距离
-    let startDistance = baseStartDistance + (direction === -1 ? -extraOffset : (direction === 1 ? -extraOffset : 0));
-    let endDistance = baseEndDistance + (direction === -1 ? -extraOffset : (direction === 1 ? -extraOffset : 0));
+    const extraOffset = 55; // 额外移动的距离
+    let startDistance = baseStartDistance + (direction === -1 ? extraOffset : (direction !== -1 ? extraOffset : 0));
+    let endDistance = baseEndDistance + (direction === -1 ? extraOffset : (direction !== -1 ? extraOffset : 0));
 
 
     const lineEndY = baseY + direction * endDistance
@@ -315,7 +328,26 @@ function clearAllMarkers(chartInstance) {
   chartInstance.removeOverlay()
   if (follower.value) follower.value.style.display = 'none'
 }
+function crosshairHandler (event) {
+  const { x, y, paneId } = event
+  if (paneId !== 'candle_pane') return
 
+  const result = chart.value.convertFromPixel({ x, y })
+  if (!result || result.dataIndex == null) return
+
+  const dataList = chart.value.getDataList()
+  const kline = dataList[result.dataIndex]
+  if (!kline) return
+
+  currentKline.value = kline
+  tooltipPos.value = { x: x + 15, y: y + 15 }
+}
+function disableCrosshair() {
+  const chart = klineRef.value?.chart
+  if (chart && crosshairHandler) {
+    chart.unsubscribeAction('onCrosshairChange', crosshairHandler)
+  }
+}
 // ==================== 图表初始化 ====================
 const initChart = () => {
   dispose('chart')
@@ -439,6 +471,7 @@ const initChart = () => {
       }
     }
   })
+  chart.value.subscribeAction('onCrosshairChange', crosshairHandler)
   window.addEventListener('resize', () => chart.value?.resize())
 }
 
@@ -466,6 +499,7 @@ onUnmounted(() => {
   searchStore.removeOnLoadEvent('klineReload')
   window.removeEventListener('resize', () => chart.value?.resize())
   document.removeEventListener('mousemove', onGlobalMouseMove)
+  disableCrosshair()
   dispose('chart')
 })
 
@@ -494,5 +528,18 @@ defineExpose({ addMarkers, clearAllMarkers, chart })
   line-height: 1.6;
   border-left: 4px solid #00b828;
   display: none;
+}
+
+
+.kline-tooltip {
+  position: fixed;          /* 使用 fixed 避免被图表遮挡 */
+  background: rgba(0,0,0,0.75);
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  pointer-events: none;    /* 鼠标可穿透浮窗 */
+  z-index: 9999;
 }
 </style>

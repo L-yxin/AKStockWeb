@@ -96,6 +96,7 @@ declare global {
   const ws_buyingAndSellingIndicator_url: typeof import('./api/index.js').ws_buyingAndSellingIndicator_url
   const ws_dealingWithLongShortIndicators_url: typeof import('./api/index.js').ws_dealingWithLongShortIndicators_url
   const ws_getLongShortSignal_url: typeof import('./api/index.js').ws_getLongShortSignal_url
+  const ws_getTradingSignals_url: typeof import('./api/index.js').ws_getTradingSignals_url
   const ws_kline_url: typeof import('./api/index.js').ws_kline_url
   const ws_syncData_url: typeof import('./api/index.js').ws_syncData_url
 }

@@ -4,7 +4,6 @@ import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import path from 'path'
-import vueInspector from 'vite-plugin-vue-inspector'
 export default defineConfig({
   resolve: {
     alias: {
@@ -13,10 +12,6 @@ export default defineConfig({
   },
   plugins: [
     vue(),
-    vueInspector({
-      // editor: 'code', // 指定VSCode为默认编辑器
-      toggleButtonVisibility: 'always' // 始终显示切换按钮
-    }),
     // 自动导入
     AutoImport({
       resolvers: [

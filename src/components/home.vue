@@ -23,6 +23,11 @@
           <el-icon><Bell /></el-icon>
           <span>买卖提示指标</span>
         </el-col>
+        <el-divider direction="vertical" style="height: 35px;" />
+        <el-col :span="5" class="menu-item" @click="loadGetTradingSignals">
+          <el-icon><Bell /></el-icon>
+          <span>加载pybroker订单</span>
+        </el-col>
       </el-row>
 
       <k-line-view ref="klineRef" />
@@ -47,6 +52,9 @@
     </div>
 
     <div v-else-if="activeMenu === 'K_lineTechnicalIndicators'" class="indicator-panel">
+      <el-button type="primary" @click="resetTechnicalIndicators" style="margin-bottom: 20px;">
+        更新支持的技术指标列表
+      </el-button>
       <el-form label-position="left" label-width="160px">
         <div class="indicator-list">
           <div v-for="(config, name) in K_lineTechnicalIndicators" :key="name" class="indicator-row">
@@ -154,7 +162,7 @@
 
 <script setup>
 import { Setting, TrendCharts, Bell, Edit, InfoFilled } from '@element-plus/icons-vue'
-import { ws_syncData_url, ws_buyingAndSellingIndicator_url, ws_getLongShortSignal_url } from '@/api'
+import { ws_syncData_url, ws_buyingAndSellingIndicator_url, ws_getLongShortSignal_url,ws_getTradingSignals_url } from '@/api'
 import { getSupportedIndicators } from 'klinecharts'
 
 const searchStore = useSearchParametersStore()
@@ -175,17 +183,21 @@ const DEFAULT_PARAMS = {
   BOLL: [20, 2],
   VOL: [5, 10, 20],
 }
-
-const indicatorsList = getSupportedIndicators()
-const initialConfig = {}
-indicatorsList.forEach(name => {
-  initialConfig[name] = {
-    enabled: false,
-    onMainChart: name === 'MA' || name === 'EMA' || name === 'BOLL',
-    params: DEFAULT_PARAMS[name] ? [...DEFAULT_PARAMS[name]] : [],
-  }
-})
-const K_lineTechnicalIndicators = reactive(initialConfig)
+const K_lineTechnicalIndicators = reactive({})
+const resetTechnicalIndicators = () => {
+  let ind = getSupportedIndicators()
+  let t = {}
+  ind.forEach(name => {
+    t[name] = {
+      enabled: false,
+      onMainChart: name === 'MA' || name === 'EMA' || name === 'BOLL',
+      params: DEFAULT_PARAMS[name] ? [...DEFAULT_PARAMS[name]] : [],
+    }
+  })
+  Object.assign(K_lineTechnicalIndicators, t)
+ 
+}
+resetTechnicalIndicators()
 
 // ---------- 买卖提示指标 ----------
 const buyingAndSellingIndicator = reactive({ buy: [], sell: [] })
@@ -413,6 +425,74 @@ const enableSelectedLongShortIndicators = () => {
   }).catch(err => console.error('启用多空指标失败:', err))
 }
 
+
+// pyb
+const loadGetTradingSignals = () => {
+  // 关闭旧的连接（避免重复）
+ 
+  const ws = new WebSocket(ws_getTradingSignals_url)
+
+  ws.onopen = () => {
+    // 后端在接受连接后会自动推送数据，无需发送任何请求
+    console.log('交易信号 WebSocket 已连接')
+  }
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (!data || !Array.isArray(data.configs)) {
+        throw new Error('返回数据格式不正确，预期包含 configs 数组')
+      }
+
+      const chart = klineRef.value?.chart
+      if (!chart) {
+        ElMessage.error('图表实例未就绪')
+        return
+      }
+
+      // 1. 清除旧的信号标记
+      klineRef.value?.clearAllMarkers(chart)
+
+      // 2. 遍历信号，转换为标记参数并添加
+      const markers = []
+      for (const signal of data.configs) {
+        const { datetime, value, type, mes } = signal
+
+        // 构造时间戳（模仿参考模板中的日线处理）
+        const t = new Date(datetime + 'T00:00:00').getTime() // 将日期字符串转为当天0点时间戳
+        const date = new Date(t)
+        date.setHours(0, 0, 0, 0)
+        const timestamp = date.getTime()
+
+
+        markers.push({
+          timestamp,
+          value,          // 价格位置
+          type: type,
+          mes              // 悬停显示的消息
+        })
+      }
+
+      // 3. 将所有标记一次性添加到图表
+      klineRef.value?.addMarkers(chart, markers, 'stock')
+
+      ElMessage.success(`成功加载 ${markers.length} 个交易信号`)
+    } catch (e) {
+      console.error('处理交易信号失败:', e)
+      ElMessage.error('处理交易信号失败：' + e.message)
+    } finally {
+      if (ws) ws.close()
+    }
+  }
+
+  ws.onerror = (error) => {
+    console.error('WebSocket 错误:', error)
+    ElMessage.error('WebSocket 连接异常')
+  }
+}
+
+
+
 // ---------- 技术指标相关方法 ----------
 const dialogVisible = ref(false)
 const editingIndicator = ref('')
@@ -535,8 +615,8 @@ const PythonBackgroundBataInternetSynchronization = () => {
 }
 
 onMounted(() => {
-  initialConfig['VOL'].enabled = true
-  initialConfig['MA'].enabled = true
+  K_lineTechnicalIndicators['VOL'].enabled = true
+  K_lineTechnicalIndicators['MA'].enabled = true
   onIndicatorToggle('VOL', true)
   onIndicatorToggle('MA', true)
   loadIndicators()
@@ -577,7 +657,7 @@ onMounted(() => {
   padding: 10px;
 }
 .indicator-list {
-  max-height: 80vh;
+  max-height: 75vh;
   overflow-y: auto;
   border: 1px solid #ebeef5;
   border-radius: 4px;
