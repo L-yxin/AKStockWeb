@@ -401,7 +401,7 @@ const enableSelectedLongShortIndicators = () => {
           // 如果是日线，调整为当天的15:00（假设数据时间为当天的00:00）
           const date = new Date(t)
           date.setHours(0, 0, 0, 0)
-          date.setDate(date.getDate() + 1) // 调整到下一天
+          date.setDate(date.getDate())
           return date.getTime()
         }
       })()
