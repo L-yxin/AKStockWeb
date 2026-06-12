@@ -27,6 +27,10 @@
         <span class="label">量</span>
         <span class="value volume">{{ formatVolume(currentKline.volume) }}</span>
       </div>
+      <div class="tooltip-per">
+          <span class="label">涨幅</span>
+          <span class="value">{{ ((currentKline.close - currentKline.preClose) / currentKline.preClose * 100).toFixed(2) }}%</span>
+      </div>
     </template>
 
     <!-- 交易信号部分 -->
@@ -470,6 +474,7 @@ function crosshairHandler(event) {
   }
 
   currentKline.value = kline
+  currentKline.value.preClose = result.dataIndex > 0 ? dataList[result.dataIndex - 1].close : kline.open
   tooltipPos.value = { x: x + 15, y: y + 15 }
 
   // 获取该时间戳的交易信号消息
