@@ -257,8 +257,8 @@ const getInputProps = (param) => {
     props.precision = 0
     props.controlsPosition = 'right'
   } else if (type.includes('float')) {
-    props.step = 0.1
-    props.precision = 2
+    props.step = 0.0001
+    props.precision = 4
     props.controlsPosition = 'right'
   } else if (type.includes('bool')) {
     props.activeText = '开启'
