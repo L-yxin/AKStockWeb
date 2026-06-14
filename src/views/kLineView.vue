@@ -1,5 +1,5 @@
 <template>
-  <div id="chart" class="chart"></div>
+  <div id="chart" class="chart" ref="chartEle"></div>
   <div ref="unifiedTooltip" class="unified-tooltip" v-show="tooltipVisible"
     :style="{ left: tooltipPos.x + 'px', top: tooltipPos.y + 'px' }">
     <!-- K线部分（有值才显示） -->
@@ -53,7 +53,6 @@ const searchStore = useSearchParametersStore()
 
 // ==================== 响应式状态 ====================
 const chart = ref(null)
-const follower = ref(null)
 let pollTimer = null
 let currentLatestDate = null
 
@@ -74,6 +73,7 @@ function normalizeToKLineData(item) {
     volume: item.volume,
   }
 }
+const chartEle = ref(null)
 const unifiedTooltip = ref(null)
 const tooltipVisible = ref(false)
 const tooltipMessages = ref([]) // 当前日期对应的交易信号消息列表
@@ -280,17 +280,6 @@ registerOverlay({
         }
       }
     ]
-  },
-  onMouseEnter: (param) => {
-    const ts = param.overlay.points[0].timestamp
-    const messages = mesMap.get(ts) || []
-    if (follower.value) {
-      follower.value.innerHTML = messages.map(m => `• ${m}`).join('<br>')
-      follower.value.style.display = 'block'
-    }
-  },
-  onMouseLeave: () => {
-    if (follower.value) follower.value.style.display = 'none'
   }
 })
 registerIndicator({
@@ -445,7 +434,6 @@ function clearAllMarkers(chartInstance) {
   // 这里可根据实际 overlay id 存储逻辑进行扩展
   mesMap.clear()
   chartInstance.removeOverlay()
-  if (follower.value) follower.value.style.display = 'none'
 }
 function crosshairHandler(event) {
   if (!event) {
@@ -622,25 +610,24 @@ const reloadKLineData = () => {
   initChart()
 }
 
-// ==================== 鼠标移动更新悬浮提示位置 ====================
-const onGlobalMouseMove = (e) => {
-  if (!follower.value) return
-  follower.value.style.left = (e.clientX + 20) + 'px'
-  follower.value.style.top = (e.clientY - 30) + 'px'
-}
 
 // ==================== 生命周期 ====================
 onMounted(() => {
   initChart()
   searchStore.addOnLoadEvent('klineReload', reloadKLineData)
-  document.addEventListener('mousemove', onGlobalMouseMove)
+  chartEle.value.addEventListener('mouseleave', () => {
+    tooltipVisible.value = false
+  })
+  
 })
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
   searchStore.removeOnLoadEvent('klineReload')
   window.removeEventListener('resize', () => chart.value?.resize())
-  document.removeEventListener('mousemove', onGlobalMouseMove)
+  chartEle.value.removeEventListener('mouseleave', () => {
+    tooltipVisible.value = false
+  })
   disableCrosshair()
   dispose('chart')
 })
