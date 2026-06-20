@@ -9,25 +9,6 @@ const searchStore = useSearchParametersStore() // 修正命名，更规范
 let allSymbolsRaw = []
 const symbolOptions = ref([])
 
-// 技术指标/买卖提示（不变）
-const indicatorOptions = ref([
-  { label: 'MA 均线', value: 'MA' },
-  { label: 'EMA 指数均线', value: 'EMA' },
-  { label: 'MACD', value: 'MACD' },
-  { label: 'KDJ', value: 'KDJ' },
-  { label: 'RSI', value: 'RSI' },
-  { label: 'BOLL 布林带', value: 'BOLL' },
-  { label: 'VOL 成交量', value: 'VOL' },
-]);
-
-const signalOptions = ref([
-  { label: '金叉提示', value: 'golden_cross' },
-  { label: '死叉提示', value: 'dead_cross' },
-  { label: '突破提示', value: 'break_up' },
-  { label: '跌破提示', value: 'break_down' },
-  { label: '超买提示', value: 'over_bought' },
-  { label: '超卖提示', value: 'over_sold' },
-])
 
 // 获取全量标的
 function fetchAllSymbols() {

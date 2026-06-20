@@ -615,6 +615,7 @@ const PythonBackgroundBataInternetSynchronization = () => {
 }
 
 onMounted(() => {
+  resetTechnicalIndicators()
   K_lineTechnicalIndicators['VOL'].enabled = true
   K_lineTechnicalIndicators['MA'].enabled = true
   onIndicatorToggle('VOL', true)

@@ -44,10 +44,9 @@
 </template>
 
 <script setup>
-import { init, dispose, registerOverlay, registerIndicator } from 'klinecharts'
-import { RSI } from 'technicalindicators'
+import { init, dispose, registerOverlay, registerIndicator,getSupportedFigures } from 'klinecharts'
+import { RSI,EMA } from 'technicalindicators'
 import { ws_kline_url } from '@/api'
-
 // ==================== Pinia Store ====================
 const searchStore = useSearchParametersStore()
 
@@ -282,6 +281,32 @@ registerOverlay({
     ]
   }
 })
+
+registerOverlay({
+  name: 'textTip',
+  totalStep: 1,              // 只需在第一步点下就完成
+  lock : true,                // 锁定，禁止用户交互修改
+  createPointFigures: ({ coordinates, overlay }) => {
+    // 从 extendData 中取出要显示的文字，没有则用默认值
+    const text = overlay.extendData?.text ?? '标注'
+
+    return {
+      type: 'text',
+      attrs: {
+        x: coordinates[0].x,
+        y: coordinates[0].y,
+        text: text
+      },
+      styles: {
+        style: 'stroke',
+        color: '#FFF600',     // 黄色
+        size: 12,
+        weight: 'normal',
+        family: 'Arial'
+      }
+    }
+  }
+})
 registerIndicator({
   name: 'RSI',
   shortName: 'RSI',
@@ -289,9 +314,7 @@ registerIndicator({
   calcParams: [6, 12, 24],
   precision: 2,
   figures: [
-    { key: 'rsi1', title: 'RSI1: ', type: 'line' },
-    { key: 'rsi2', title: 'RSI2: ', type: 'line' },
-    { key: 'rsi3', title: 'RSI3: ', type: 'line' }
+   
   ],
   calc: (dataList, indicator) => {
     const periods = indicator.calcParams
@@ -300,7 +323,7 @@ registerIndicator({
 
     // 初始化结果数组，所有位置初始为 null
     const results = Array(total).fill().map(() => ({ rsi1: null, rsi2: null, rsi3: null }))
-
+    indicator.figures = [] // 清空原有图形定义
     periods.forEach((period, idx) => {
       // 计算 RSI，返回值长度 = total - period
       const rsiValues = RSI.calculate({ period, values: closePrices })
@@ -309,6 +332,9 @@ registerIndicator({
       for (let i = 0; i < rsiValues.length; i++) {
         results[period + i][key] = rsiValues[i]
       }
+      indicator.figures.push(
+        { key: `rsi${idx + 1}`, title: `RSI${idx + 1}: `, type: 'line' }
+      )
     })
 
     return results
@@ -385,6 +411,104 @@ registerIndicator({
     return results
   }
 })
+
+
+
+registerIndicator({
+  name: 'Relative high and low points',
+  shortName: 'HL',
+  series: 'price',
+  calcParams: [1, 5],            // [周期, step]
+  precision: 2,
+  figures: [],
+  calc: (dataList, indicator) => {
+    const period = indicator.calcParams[0] ?? 1
+    const step = indicator.calcParams[1] ?? 5
+    const highs = dataList.map(d => d.high)
+    const lows = dataList.map(d => d.low)
+    const total = dataList.length
+
+    // ----- EMA -----
+    const HighEMA = EMA.calculate({ period, values: highs })
+    const LowEMA = EMA.calculate({ period, values: lows })
+    // ----- 找出全部拐点（不分 len）-----
+    const highPivots = []  // { index, price }
+    const lowPivots = []
+    for (let i = 2; i < total ; i++) {
+      // 高点
+      if (HighEMA[i - 2] <= HighEMA[i-1] && HighEMA[i-1] >= HighEMA[i]) {
+        const start = Math.max(0, i - step)
+        const maxHigh = Math.max(...highs.slice(start, i+1))
+        highPivots.push({ index: i, price: maxHigh })
+      }
+      // 低点
+      if (LowEMA[i - 2] >= LowEMA[i-1] && LowEMA[i-1] <= LowEMA[i]) {
+        const start = Math.max(0, i - step)
+        const minLow = Math.min(...lows.slice(start, i+1))
+        lowPivots.push({ index: i, price: minLow })
+      }
+    }
+
+    // ----- 生成折线数组（每个时点当前有效的价格）-----
+    const buildLine = (pivots) => {
+      const line = new Array(total).fill(null)
+      if (pivots.length === 0) return line
+
+      let pivIdx = 0
+      let currentPrice = null
+      for (let i = 0; i < total; i++) {
+        // 如果到了新极点，更新价格
+        if (pivIdx < pivots.length && i >= pivots[pivIdx].index) {
+          currentPrice = pivots[pivIdx].price
+          pivIdx++
+        }
+        line[i] = currentPrice
+      }
+      return line
+    }
+
+    const highLine = buildLine(highPivots)   // 高点折线值
+    const lowLine = buildLine(lowPivots)     // 低点折线值
+
+    // ----- 结果数组 -----
+    const results = new Array(total)
+    for (let i = 0; i < total; i++) {
+      results[i] = {}
+    }
+
+    // 清空 figures
+    indicator.figures.splice(0, indicator.figures.length)
+
+   
+
+    const highKey = `high`
+    const lowKey = `low`
+
+    // 填充数据
+    for (let i = 0; i < total; i++) {
+      results[i][highKey] = highLine[i]
+      results[i][lowKey] = lowLine[i]
+    }
+
+    // 图形定义
+    indicator.figures.push({
+      key: highKey,
+      title: `高: `,
+      type: 'line',
+      styles: () => ({ color: '#E57373', size: 1 })
+    })
+    indicator.figures.push({
+      key: lowKey,
+      title: `低: `,
+      type: 'line',
+      styles: () => ({ color: '#81C784', size: 1 })
+    })  
+    
+
+    return results
+  }
+})
+
 
 // ==================== 对外暴露的标记添加方法 ====================
 function addMarkers(chartInstance, configs, market = 'stock') {
@@ -618,6 +742,9 @@ onMounted(() => {
   chartEle.value.addEventListener('mouseleave', () => {
     tooltipVisible.value = false
   })
+  console.log(getSupportedFigures())
+
+ 
   
 })
 
