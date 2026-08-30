@@ -435,13 +435,19 @@ const loadGetTradingSignals = () => {
   ws.onopen = () => {
     // 后端在接受连接后会自动推送数据，无需发送任何请求
     console.log('交易信号 WebSocket 已连接')
+    ws.send(JSON.stringify({
+      symbol: searchStore.symbol,
+      startTime: searchStore.startDate,
+      endTime: searchStore.endDate,
+      adjust_type: searchStore.adjust_type  
+     }))
   }
 
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data)
       if (!data || !Array.isArray(data.configs)) {
-        throw new Error('返回数据格式不正确，预期包含 configs 数组')
+        throw new Error(`返回数据格式不正确，预期包含 configs 数组\ndata: ${JSON.stringify(data).slice(0, 200)}`)
       }
 
       const chart = klineRef.value?.chart

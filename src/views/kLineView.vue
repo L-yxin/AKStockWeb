@@ -129,7 +129,7 @@ function fetchHistoryData(symbol, period, startDate, endDate) {
         action: "history",
         code: symbol.ticker,
         period: `${period.span}${period.type === 'day' ? 'd' : period.type[0]}`,
-        adjust_type: "",
+        adjust_type: searchStore.adjust_type,
         start_date: startDate,
         end_date: endDate,
       }))
@@ -412,8 +412,6 @@ registerIndicator({
   }
 })
 
-
-
 registerIndicator({
   name: 'Relative high and low points',
   shortName: 'HL',
@@ -509,6 +507,311 @@ registerIndicator({
   }
 })
 
+registerIndicator({
+  name: 'RelativeHighPoints',
+  shortName: 'HighPts',
+  series: 'price',
+  calcParams: [1, 5],
+  precision: 2,
+  figures: [],
+  calc: (dataList, indicator) => {
+    const params = indicator.calcParams;
+    const groupCount = Math.floor(params.length / 2);
+    const highs = dataList.map(d => d.high);
+    const total = dataList.length;
+
+    indicator.figures.splice(0, indicator.figures.length);
+    const results = new Array(total);
+    for (let i = 0; i < total; i++) results[i] = {};
+
+    for (let g = 0; g < groupCount; g++) {
+      const period = params[g * 2] ?? 1;
+      const step = params[g * 2 + 1] ?? 5;
+
+      const HighEMA = EMA.calculate({ period, values: highs });
+      const highPivots = [];
+      for (let i = 2; i < total; i++) {
+        if (HighEMA[i] == null) continue;
+        if (HighEMA[i - 2] <= HighEMA[i - 1] && HighEMA[i - 1] >= HighEMA[i]) {
+          const start = Math.max(0, i - step);
+          const maxHigh = Math.max(...highs.slice(start, i + 1));
+          highPivots.push({ index: i, price: maxHigh });
+        }
+      }
+
+      const line = new Array(total).fill(null);
+      if (highPivots.length > 0) {
+        let pivIdx = 0, currentPrice = null;
+        for (let i = 0; i < total; i++) {
+          if (pivIdx < highPivots.length && i >= highPivots[pivIdx].index) {
+            currentPrice = highPivots[pivIdx].price;
+            pivIdx++;
+          }
+          line[i] = currentPrice;
+        }
+      }
+
+      const key = `high_${g + 1}`;
+      for (let i = 0; i < total; i++) results[i][key] = line[i];
+
+      const colors = ['#E57373', '#EF5350', '#F44336', '#E53935', '#D32F2F'];
+      indicator.figures.push({
+        key,
+        title: `高${g + 1} (${period},${step})`,
+        type: 'line',
+        styles: () => ({ color: colors[g % colors.length], size: 1 })
+      });
+    }
+    return results;
+  }
+});
+
+
+registerIndicator({
+  name: 'RelativeLowPoints',
+  shortName: 'LowPts',
+  series: 'price',
+  calcParams: [1, 5],
+  precision: 2,
+  figures: [],
+  calc: (dataList, indicator) => {
+    const params = indicator.calcParams;
+    const groupCount = Math.floor(params.length / 2);
+    const lows = dataList.map(d => d.low);
+    const total = dataList.length;
+
+    indicator.figures.splice(0, indicator.figures.length);
+    const results = new Array(total);
+    for (let i = 0; i < total; i++) results[i] = {};
+
+    for (let g = 0; g < groupCount; g++) {
+      const period = params[g * 2] ?? 1;
+      const step = params[g * 2 + 1] ?? 5;
+
+      const LowEMA = EMA.calculate({ period, values: lows });
+      const lowPivots = [];
+      for (let i = 2; i < total; i++) {
+        if (LowEMA[i] == null) continue;
+        if (LowEMA[i - 2] >= LowEMA[i - 1] && LowEMA[i - 1] <= LowEMA[i]) {
+          const start = Math.max(0, i - step);
+          const minLow = Math.min(...lows.slice(start, i + 1));
+          lowPivots.push({ index: i, price: minLow });
+        }
+      }
+
+      const line = new Array(total).fill(null);
+      if (lowPivots.length > 0) {
+        let pivIdx = 0, currentPrice = null;
+        for (let i = 0; i < total; i++) {
+          if (pivIdx < lowPivots.length && i >= lowPivots[pivIdx].index) {
+            currentPrice = lowPivots[pivIdx].price;
+            pivIdx++;
+          }
+          line[i] = currentPrice;
+        }
+      }
+
+      const key = `low_${g + 1}`;
+      for (let i = 0; i < total; i++) results[i][key] = line[i];
+
+      const colors = ['#81C784', '#66BB6A', '#4CAF50', '#43A047', '#388E3C'];
+      indicator.figures.push({
+        key,
+        title: `低${g + 1} (${period},${step})`,
+        type: 'line',
+        styles: () => ({ color: colors[g % colors.length], size: 1 })
+      });
+    }
+    return results;
+  }
+});
+
+
+
+registerIndicator({
+  name: 'VolumeNewLowDays',
+  shortName: 'VolNLD',
+  series: 'VolumeNewLowDays',
+  calcParams: [400],            // [max_lookback]，0=回看全部历史
+  precision: 0,
+  figures: [
+    {
+      key: 'days',
+      title: '距上次更低量的天数',
+      type: 'line',
+      styles: () => ({ color: '#FF5722', size: 1 })
+    },
+  ],
+  calc: (dataList, indicator) => {
+    const maxLookback = indicator.calcParams[0] ?? 400;
+    const volumes = dataList.map(d => d.volume);
+    const total = dataList.length;
+    const results = new Array(total);
+
+    for (let i = 0; i < total; i++) {
+      if (i === 0) {
+        results[i] = { days: 0 }; // 第一根无前序数据
+        continue;
+      }
+
+      // 窗口起点：maxLookback<=0 回看全部
+      const start = maxLookback <= 0 ? 0 : Math.max(0, i - maxLookback);
+
+      // 从 i-1 往前找第一个小于 volumes[i] 的位置
+      let days = -1; // 初始-1表示未找到
+      for (let j = i - 1; j >= start; j--) {
+        if (volumes[j] < volumes[i]) {
+          days = i - j; // 距离当前的天数
+          break;
+        }
+      }
+
+      // 如果未找到（即当前值是窗口内最低），则返回窗口长度（即创了窗口长度那么多天的新低）
+      if (days === -1) {
+        days = i - start; // 窗口内所有值都大于等于当前，相当于创了 (i-start) 天新低
+        // 若回看全部且找不到，则 days = i（即从第0根到现在的总天数）
+      }
+
+      results[i] = { days };
+    }
+    return results;
+  }
+});
+
+// ===========================================================================
+// 1. 核心工具函数：连续变化统计（支持回看窗口）
+// ===========================================================================
+/**
+ * 统计阶梯线连续上升/下降的阶梯数（支持回看窗口限制）
+ * @param {number[]} sequence - 阶梯线序列（含 null/undefined 表示无效）
+ * @param {number} maxBacklook - 最大回看 K 线数（0=全部历史）
+ * @returns {number[]}
+ */
+function continuousChange(sequence, maxBacklook = 0) {
+  const n = sequence.length;
+  const out = new Array(n).fill(0);
+  let lastValidIdx = -1;          // 最近有效值的索引
+  let prevVal = null;             // 最近有效值
+  let direction = 0;              // 当前趋势方向：1上升，-1下降
+  let count = 0;                  // 当前计数值（带符号）
+
+  for (let i = 0; i < n; i++) {
+    const val = sequence[i];
+    if (val == null) {
+      out[i] = 0;
+      continue;
+    }
+
+    // 判断是否需要重置（无前序或超出窗口）
+    if (lastValidIdx === -1 || (maxBacklook > 0 && i - lastValidIdx > maxBacklook)) {
+      // 新趋势开始，默认视为上升，计数为1
+      count = 1;
+      direction = 1;
+      out[i] = count;
+      prevVal = val;
+      lastValidIdx = i;
+      continue;
+    }
+
+    // 有前序且在窗口内
+    if (val > prevVal) {
+      if (direction === 1) {
+        count++;          // 延续上升
+      } else {
+        direction = 1;    // 方向转升，重置计数为1
+        count = 1;
+      }
+    } else if (val < prevVal) {
+      if (direction === -1) {
+        count--;          // 延续下降（绝对值增加）
+      } else {
+        direction = -1;   // 方向转降，重置计数为-1
+        count = -1;
+      }
+    } else {
+      // 相等，计数不变，方向不变
+    }
+
+    out[i] = count;
+    prevVal = val;
+    lastValidIdx = i;
+  }
+  return out;
+}
+
+// ===========================================================================
+// 2. 注册连续变化指标（基于相对高低点阶梯线）
+// ===========================================================================
+registerIndicator({
+  name: 'ContinuousChange',
+  shortName: 'ContChg',
+  series: 'price',
+  // 参数顺序：[period, step, maxBacklook, type]
+  // type: 'high' 或 'low'
+  calcParams: [1, 5, 0, 0],
+  precision: 0,
+  figures: [
+    {
+      key: 'value',
+      title: '连续变化数',
+      type: 'line',
+      styles: () => ({ color: '#FFB74D', size: 1 })
+    }
+  ],
+  calc: (dataList, indicator) => {
+    const params = indicator.calcParams;
+    const period = params[0] ?? 1;
+    const step = params[1] ?? 5;
+    const maxBacklook = params[2] ?? 0;
+    const type = params[3] ?? 0;
+
+    const priceArr = dataList.map(d => (type === 1 ? d.high : d.low));
+    const total = dataList.length;
+
+    // ---- 计算 EMA（沿用通达信 EMA 计算，此处使用 EMA.calculate，确保已加载） ----
+    const ema = EMA.calculate({ period, values: priceArr });
+
+    // ---- 寻找拐点 ----
+    const pivots = [];
+    for (let i = 2; i < total; i++) {
+      if (ema[i] == null || ema[i-1] == null || ema[i-2] == null) continue;
+      const isHigh = (type === 1);
+      const condition = isHigh
+        ? (ema[i-2] <= ema[i-1] && ema[i-1] >= ema[i])
+        : (ema[i-2] >= ema[i-1] && ema[i-1] <= ema[i]);
+      if (condition) {
+        const start = Math.max(0, i - step);
+        const slice = priceArr.slice(start, i + 1);
+        const extreme = isHigh ? Math.max(...slice) : Math.min(...slice);
+        pivots.push({ index: i, price: extreme });
+      }
+    }
+
+    // ---- 构建阶梯线 ----
+    const stepLine = new Array(total).fill(null);
+    if (pivots.length > 0) {
+      let pIdx = 0;
+      let current = null;
+      for (let i = 0; i < total; i++) {
+        if (pIdx < pivots.length && i >= pivots[pIdx].index) {
+          current = pivots[pIdx].price;
+          pIdx++;
+        }
+        stepLine[i] = current;
+      }
+    }
+
+    // ---- 计算连续变化 ----
+    const changes = continuousChange(stepLine, maxBacklook);
+
+    // ---- 组装返回 ----
+    const results = new Array(total);
+    for (let i = 0; i < total; i++) {
+      results[i] = { value: changes[i] };
+    }
+    return results;
+  }
+});
 
 // ==================== 对外暴露的标记添加方法 ====================
 function addMarkers(chartInstance, configs, market = 'stock') {

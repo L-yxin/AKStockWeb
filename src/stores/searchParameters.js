@@ -3,9 +3,10 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
   // 1. 响应式状态
   const symbol = ref('sh000001') // 默认标的：上证指数
   let today = new Date()
-  today.setFullYear(today.getFullYear() - 1) // 默认开始日期：1年前
+  today.setFullYear(today.getFullYear() - 7) // 默认开始日期：6年前
   const startDate = ref(today.toISOString().split('T')[0])
-  const endDate = ref(new Date().toISOString().split('T')[0]) 
+  const endDate = ref(new Date().toISOString().split('T')[0])
+  const adjust_type = ref("none") // none不复权、front前复权、back后复权
 
   // 2. 事件容器
   const onLoadEvent = ref(new Map())
@@ -30,6 +31,11 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
     // 校验4：结束日期 < 开始日期 → 拦截
     if (endDate.value < startDate.value) {
       ElMessage.error('结束日期不能小于开始日期')
+      return false
+    }
+    // 校验复权类型
+    if (!['none', 'front', 'back'].includes(adjust_type.value)) {
+      ElMessage.error('复权类型不合法')
       return false
     }
     // 所有校验通过
@@ -61,6 +67,7 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
     symbol,
     startDate,
     endDate,
+    adjust_type,
     addOnLoadEvent,
     removeOnLoadEvent,
     onLoad,

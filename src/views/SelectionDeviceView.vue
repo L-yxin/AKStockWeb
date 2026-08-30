@@ -63,42 +63,26 @@ onMounted(() => {
     <div class="form-grid">
       <!-- 标的（绑定Pinia） ✅ -->
       <el-form-item label="标的" label-position="left">
-        <el-select
-          v-model="searchStore.symbol"
-          filterable
-          remote
-          :remote-method="remoteMethod"
-          placeholder="请输入代码/名称搜索"
-          style="width: 100%"
-          :loading="false"
-        >
-          <el-option
-            v-for="item in symbolOptions"
-            :key="item.value"
-            :label="item.label"
-            :value="item.value"
-          />
+        <el-select v-model="searchStore.symbol" filterable remote :remote-method="remoteMethod" placeholder="请输入代码/名称搜索"
+          style="width: 100%" :loading="false">
+          <el-option v-for="item in symbolOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
       </el-form-item>
-
+      <el-form-item label="复权类型" label-position="left">
+        <el-select v-model="searchStore.adjust_type" placeholder="请选择复权类型" style="width: 100%">
+          <el-option label="不复权" value="none" />
+          <el-option label="前复权" value="front" />
+          <el-option label="后复权" value="back" />
+        </el-select>
+      </el-form-item>
       <!-- 时间（绑定Pinia） ✅ -->
       <el-form-item label="开始时间" label-position="left">
-        <el-date-picker
-          v-model="searchStore.startDate"
-          type="date"
-          format="YYYY-MM-DD"
-          value-format="YYYY-MM-DD"
-          placeholder="选择开始日期"
-        />
+        <el-date-picker v-model="searchStore.startDate" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
+          placeholder="选择开始日期" />
       </el-form-item>
       <el-form-item label="结束时间" label-position="left">
-        <el-date-picker
-          v-model="searchStore.endDate"
-          type="date"
-          format="YYYY-MM-DD"
-          value-format="YYYY-MM-DD"
-          placeholder="选择结束日期"
-        />
+        <el-date-picker v-model="searchStore.endDate" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
+          placeholder="选择结束日期" />
       </el-form-item>
 
       <!-- 加载按钮：触发Pinia的onLoad方法 ✅ -->
@@ -112,11 +96,13 @@ onMounted(() => {
   border-radius: 8px;
   box-shadow: 0 2px 8px #00000008;
 }
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 16px;
 }
+
 :deep(.el-form-item .el-form-item__label) {
   font-weight: 600;
   font-size: 18px;
