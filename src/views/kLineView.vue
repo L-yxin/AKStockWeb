@@ -2,6 +2,9 @@
   <div class="chart-wrap">
     <div id="chart" class="chart" ref="chartEle"></div>
 
+    <!-- 模拟交易：未来K线遮挡层（绝对定位在 K 线 canvas 之上，pointer-events 穿透） -->
+    <div class="sim-future-mask" :style="maskStyle"></div>
+
     <!-- 周期切换工具条（klinecharts setPeriod：{span, type}） -->
     <div class="period-toolbar">
       <button v-for="p in PERIODS" :key="periodKey(p)" type="button"
@@ -69,11 +72,142 @@ import { ws_kline_url } from '@/api'
 
 // ==================== Pinia Store ====================
 const searchStore = useSearchParametersStore()
+const simStore = useSimulationStore()
 
 // ==================== 响应式状态 ====================
 const chart = ref(null)
 let pollTimer = null
 let currentLatestDate = null
+
+// ==================== 模拟交易：未来K线遮挡（DOM 层） + 拖拽接管 ====================
+// 遮挡用绝对定位 div（覆盖在 K 线 canvas 之上），从"当前柱右边缘"延伸到容器右端；
+// 位置由 chart.convertToPixel(timestamp) 计算，随滚动/缩放/跳柱实时更新。
+// 全程本地数据、无网络请求；pointer-events:none 不干扰 K 线图交互。
+const maskLeft = ref(0)
+const maskStyle = computed(() => {
+  if (!simStore.active) return { display: 'none' }
+  const w = maskLeft.value >= 0 ? `calc(100% - ${maskLeft.value}px)` : '100%'
+  return { left: `${Math.max(maskLeft.value, 0)}px`, width: w }
+})
+// 在图表全量数据中定位某根模拟柱的数据索引（chart 数据可能多于模拟 bars）
+const barIndexOf = (c, ts) => {
+  const data = c.getDataList()
+  for (let i = 0; i < data.length; i++) {
+    if (data[i].timestamp === ts) return i
+  }
+  return -1
+}
+const updateFutureMaskLeft = () => {
+  const c = chart.value
+  if (!c || !simStore.active) return
+  const bars = simStore.bars
+  const idx = simStore.cursorIndex
+  if (!bars.length || idx < 0 || idx >= bars.length) { maskLeft.value = 0; return }
+  try {
+    // convertToPixel 的 x 是数据坐标（absolute 仅作用于 y），无法直接用于容器定位；
+    // 改用公开 API 自算：pane 左偏移 + (barIdx - realFrom) × barSpace + 半柱宽
+    const barIdx = barIndexOf(c, bars[idx].timestamp)
+    if (barIdx < 0) { maskLeft.value = 0; return }
+    const vr = c.getVisibleRange()
+    const bs = c.getBarSpace()
+    const paneDom = c.getDom('candle_pane')
+    const paneLeft = paneDom ? (paneDom.offsetLeft || 0) : 0
+    maskLeft.value = paneLeft + (barIdx - Math.floor(vr.realFrom)) * bs.bar + bs.halfGapBar
+  } catch (e) {
+    maskLeft.value = 0
+  }
+}
+
+// 让视区跟随当前模拟柱（scrollToDataIndex 用"数据索引"；模拟 cursor 是 bars 索引，需 timestamp 对齐）
+const scrollToCursorBar = () => {
+  const c = chart.value
+  if (!c || !simStore.active) return
+  const bars = simStore.bars
+  const idx = simStore.cursorIndex
+  if (!bars.length || idx < 0 || idx >= bars.length) return
+  const barIdx = barIndexOf(c, bars[idx].timestamp)
+  if (barIdx >= 0) {
+    try { c.scrollToDataIndex(barIdx, 0) } catch (e) { /* 忽略 */ }
+  }
+}
+const syncSimView = () => {
+  scrollToCursorBar()
+  updateFutureMaskLeft()
+}
+
+// K线对象变更（切换标的/周期/重新加载）后：数据到达时校验模拟上下文，并重建遮挡
+const periodKeyOf = (p) => {
+  if (!p) return '1d'
+  if (p.type === 'minute') return `${p.span}m`
+  if (p.type === 'hour') return `${p.span}h`
+  if (p.type === 'day') return `${p.span}d`
+  if (p.type === 'week') return `${p.span}w`
+  if (p.type === 'month') return `${p.span}M`
+  return '1d'
+}
+const onSimulationDataArrived = () => {
+  if (!simStore.active) return
+  const c = chart.value
+  if (!c) return
+  try {
+    const p = c.getPeriod()
+    const currentKey = `${searchStore.symbol}:${periodKeyOf(p)}`
+    if (simStore.chartKey && simStore.chartKey !== currentKey) {
+      // 标的或周期已变化 → 模拟区间失效，自动结束模拟
+      simStore.finish()
+      return
+    }
+  } catch (e) { /* 忽略 */ }
+  setTimeout(syncSimView, 0)
+}
+
+// K线图滚动/缩放：仅同步遮挡位置（不接管当前柱）
+const simRangeHandler = () => {
+  if (simStore.active) updateFutureMaskLeft()
+}
+
+// 真实用户拖拽接管：pointerdown→pointerup（位移超过阈值才算拖动）→ 当前柱 = 视区最右可见柱
+let simDragStart = null
+const onChartPointerDown = (e) => {
+  simDragStart = { x: e.clientX, y: e.clientY }
+}
+const onChartPointerUp = (e) => {
+  if (!simDragStart) return
+  const dx = e.clientX - simDragStart.x
+  const dy = e.clientY - simDragStart.y
+  simDragStart = null
+  if (!simStore.active || simStore.paused) return
+  if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return // 点击（非拖动）不接管
+  const c = chart.value
+  if (!c) return
+  try {
+    const vr = c.getVisibleRange()
+    if (vr && Number.isFinite(vr.realTo)) {
+      simStore.setCursorFromChart(Math.floor(vr.realTo))
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
+// 模拟启停 / 当前柱变化 / 模拟数据填充 → 同步遮挡并让视区跟随
+watch(() => simStore.active, (act) => {
+  // 面板固定显示时 K 线区宽度已变化 → 强制图表重排（画布与容器对齐）
+  const c = chart.value
+  if (c) { try { c.resize() } catch (e) { /* 忽略 */ } }
+  if (act) {
+    updateFutureMaskLeft()
+  } else {
+    maskLeft.value = 0
+    // 结束模拟：清除 K 线上的买卖交易标记
+    if (c) { try { clearAllMarkers(c) } catch (e) { /* 忽略 */ } }
+  }
+})
+watch(() => simStore.cursorIndex, () => {
+  if (simStore.active) syncSimView()
+})
+watch(() => simStore.bars.length, () => {
+  // bars 异步填充可能晚于 cursor=0，填充后再同步一次
+  if (simStore.active) syncSimView()
+})
 
 // 初始/翻页每次请求的 bar 数（K线分页模型：init 与 forward 都按此数量向后端取数）
 const DEFAULT_PAGE_SIZE = 300
@@ -510,6 +644,7 @@ const initChart = () => {
           const reachedUserStart = bars.length > 0
             && timestampToDateStr(bars[0].timestamp) <= searchStore.startDate
           callback(bars, { forward: bars.length > 0 && !reachedUserStart, backward: false })
+          onSimulationDataArrived()
           return
         }
 
@@ -544,6 +679,7 @@ const initChart = () => {
           const reachedUserStart = bars.length > 0
             && timestampToDateStr(bars[0].timestamp) <= searchStore.startDate
           callback(bars, { forward: bars.length > 0 && !reachedUserStart, backward: false })
+          onSimulationDataArrived()
           return
         }
 
@@ -578,7 +714,7 @@ const initChart = () => {
         }
       }
       poll()
-      pollTimer = setInterval(poll, 2000)
+      pollTimer = setInterval(poll, 5000)
     },
 
     unsubscribeBar() {
@@ -590,6 +726,8 @@ const initChart = () => {
   })
 
   chart.value.subscribeAction('onCrosshairChange', crosshairHandler)
+  // 模拟交易拖拽接管：拖动/缩放 K 线图 → 当前模拟柱跟随
+  chart.value.subscribeAction('onVisibleRangeChange', simRangeHandler)
 
   // 重放已启用指标：K线对象重建（切换标的/重新加载）后恢复用户勾选的指标，
   // 修复"显示已启用的指标未在K线对象变更后重新启用"
@@ -605,6 +743,19 @@ const initChart = () => {
 
   // 云指标数据到达后强制刷新
   setCloudMetricsChartGetter(() => chart.value)
+
+  // 模拟交易进行中：K线对象重建（切换标的/重新加载）后重放交易记录标记
+  const simStore = useSimulationStore()
+  if (simStore.active) {
+    const simConfigs = simStore.getMarkerConfigs()
+    if (simConfigs.length) {
+      try {
+        addMarkers(chart.value, simConfigs, 'futures')
+      } catch (e) {
+        console.warn('重放模拟交易标记失败:', e)
+      }
+    }
+  }
 }
 
 // 窗口缩放监听（具名函数，便于卸载时移除）
@@ -622,6 +773,9 @@ onMounted(() => {
   initChart()
   searchStore.addOnLoadEvent('klineReload', reloadKLineData)
   chartEle.value.addEventListener('mouseleave', hideTooltip)
+  // 模拟交易拖拽接管（真实用户拖拽：pointerdown→up 判定）
+  chartEle.value.addEventListener('pointerdown', onChartPointerDown)
+  chartEle.value.addEventListener('pointerup', onChartPointerUp)
   window.addEventListener('resize', handleResize)
 })
 
@@ -634,6 +788,8 @@ onUnmounted(() => {
   searchStore.removeOnLoadEvent('klineReload')
   window.removeEventListener('resize', handleResize)
   chartEle.value?.removeEventListener('mouseleave', hideTooltip)
+  chartEle.value?.removeEventListener('pointerdown', onChartPointerDown)
+  chartEle.value?.removeEventListener('pointerup', onChartPointerUp)
   disableCrosshair()
   destroyCloudMetrics()
   dispose('chart')
@@ -670,6 +826,17 @@ defineExpose({ addMarkers: wrappedAddMarkers, clearAllMarkers: wrappedClearMarke
 .chart {
   width: 100%;
   height: 100%;
+}
+
+/* 模拟交易未来K线遮挡层：覆盖在 K 线 canvas 之上，从当前柱右边缘延伸到右端 */
+.sim-future-mask {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(8, 12, 24, 0.96);
+  z-index: 9;
+  pointer-events: none;
+  transition: left 0.08s linear, width 0.08s linear;
 }
 
 /* 周期切换工具条（悬浮于图表顶部中央，深色风格与整体 UI 一致） */

@@ -32,6 +32,13 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
   // 2. 事件容器
   const onLoadEvent = ref(new Map())
 
+  // 3. 买卖提示指标信号（已启用指标的返回值，供模拟交易跳柱时提示）
+  // 每项：{ period, datetime, timestamp, type: buy|sell, value, low, high, message }
+  const longShortSignals = ref([])
+  const setLongShortSignals = (list) => {
+    longShortSignals.value = Array.isArray(list) ? list : []
+  }
+
   // 3. 核心：参数校验函数
   const validateParameters = () => {
     // 校验1：标的不能为空
@@ -93,6 +100,8 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
     setPeriod,
     enabledIndicators,
     setEnabledIndicators,
+    longShortSignals,
+    setLongShortSignals,
     addOnLoadEvent,
     removeOnLoadEvent,
     onLoad,

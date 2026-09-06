@@ -277,6 +277,8 @@ const enableSelectedLongShortIndicators = () => {
     const chart = getChart()
     if (!component || !chart) return
     component.clearAllMarkers(chart)
+    // 保存信号到 store（含 timestamp），供模拟交易跳柱时按柱提示
+    const signalsWithTs = []
     for (const signal of parsedData) {
       const period = signal.period
       const timestamp = (() => {
@@ -304,8 +306,19 @@ const enableSelectedLongShortIndicators = () => {
         return signal.value
       })()
 
+      signalsWithTs.push({
+        period,
+        datetime: String(signal.datetime),
+        timestamp,
+        type: signal.type,       // 原始 buy|sell（模拟交易提示用）
+        message: signal.message,
+        value,
+        low: signal.low,
+        high: signal.high,
+      })
       component.addMarkers(chart, [{ timestamp, type, value, mes: signal.message }], "predict")
     }
+    searchStore.setLongShortSignals(signalsWithTs)
   }).catch(err => console.error('启用多空指标失败:', err))
 }
 

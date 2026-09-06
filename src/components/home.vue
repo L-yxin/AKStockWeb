@@ -27,13 +27,28 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>信号质量评测</span>
         </div>
+        <div class="menu-sep" />
+        <div class="menu-item" @click="openSimulation">
+          <el-icon><Coin /></el-icon>
+          <span>模拟交易</span>
+        </div>
+        <div class="menu-sep" />
+        <div class="menu-item" @click="openDrawer('cloudMetricUpload')">
+          <el-icon><TrendCharts /></el-icon>
+          <span>云指标</span>
+        </div>
         <div class="menubar-spacer" />
         <div class="menubar-status">数据源：通达信后台</div>
       </div>
 
-      <!-- K线主区域 -->
+      <!-- K线主区域 + 模拟交易右侧面板（启用模拟交易时不弹抽屉，直接固定在右侧） -->
       <div class="chart-area">
-        <k-line-view ref="klineRef" />
+        <div class="kline-main">
+          <k-line-view ref="klineRef" />
+        </div>
+        <div v-show="simPanelVisible" class="sim-side">
+          <simulation-panel :chart-ref="klineRef" @close="closeSimulation" />
+        </div>
       </div>
     </el-main>
   </el-container>
@@ -45,20 +60,36 @@
       :preset-enabled="INITIAL_ENABLED_INDICATORS" />
     <long-short-indicator-panel v-else-if="activeMenu === 'buyingAndSellingIndicator'" :chart-ref="klineRef" />
     <signal-quality-panel v-else-if="activeMenu === 'signalQualityEvaluate'" :chart-ref="klineRef" />
+    <cloud-metric-panel v-else-if="activeMenu === 'cloudMetricUpload'" />
   </el-drawer>
 </template>
 
 <script setup>
-import { TrendCharts, Bell, Download, DataAnalysis } from '@element-plus/icons-vue'
+import { TrendCharts, Bell, Download, DataAnalysis, Coin, Upload } from '@element-plus/icons-vue'
 import { ws_getTradingSignals_url } from '@/api'
 import { INITIAL_ENABLED_INDICATORS } from '@/config/indicatorDefaults'
 
 const searchStore = useSearchParametersStore()
 
-// 抽屉控制
+// 抽屉控制（K线技术指标/买卖提示指标/信号质量评测）
 const drawerVisible = ref(false)
 const activeMenu = ref('')
 const klineRef = ref(null)
+
+// 模拟交易：不弹抽屉，面板固定在 K 线图右侧
+const simPanelVisible = ref(false)
+// 面板显示/隐藏会改变 K 线区宽度 → 通知图表 resize，避免画布与容器错位
+const notifyChartResize = () => {
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 30)
+}
+const openSimulation = () => {
+  simPanelVisible.value = true
+  notifyChartResize()
+}
+const closeSimulation = () => {
+  simPanelVisible.value = false
+  notifyChartResize()
+}
 
 const openDrawer = (menu) => {
   activeMenu.value = menu
@@ -70,6 +101,8 @@ const getCH = (key) => {
     K_lineTechnicalIndicators: 'K线技术指标',
     buyingAndSellingIndicator: '买卖提示指标',
     signalQualityEvaluate: '信号质量评测',
+    simulation: '模拟交易',
+    cloudMetricUpload: '云指标',
   }
   return map[key] || key
 }
@@ -207,6 +240,21 @@ const loadGetTradingSignals = () => {
 .chart-area {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   padding: 10px;
+  display: flex;
+  gap: 10px;
+}
+.kline-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+.sim-side {
+  width: 440px;
+  flex: none;
+  overflow-y: auto;
+  border-left: 1px solid rgba(148, 163, 184, 0.15);
+  padding-left: 10px;
 }
 </style>

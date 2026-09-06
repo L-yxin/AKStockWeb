@@ -6,6 +6,8 @@
 // biome-ignore lint: disable
 export {}
 declare global {
+  const 
+  uploadCloudMetric: typeof import('./api/index.js')['
   const DEFAULT_PARAMS: typeof import('./config/indicatorDefaults.js').DEFAULT_PARAMS
   const EffectScope: typeof import('vue').EffectScope
   const ElMessage: typeof import('element-plus/es').ElMessage
@@ -15,6 +17,7 @@ declare global {
   const acceptHMRUpdate: typeof import('pinia').acceptHMRUpdate
   const addMarkers: typeof import('./chart/markers.js').addMarkers
   const api: typeof import('./api/index.js').default
+  const base_http_url: typeof import('./api/index.js').base_http_url
   const base_ws_url: typeof import('./api/index.js').base_ws_url
   const clearAllMarkers: typeof import('./chart/markers.js').clearAllMarkers
   const computed: typeof import('vue').computed
@@ -24,10 +27,12 @@ declare global {
   const defineAsyncComponent: typeof import('vue').defineAsyncComponent
   const defineComponent: typeof import('vue').defineComponent
   const defineStore: typeof import('pinia').defineStore
+  const deleteCloudMetric: typeof import('./api/index.js').deleteCloudMetric
   const destroyCloudMetrics: typeof import('./chart/indicators/cloudMetrics.js').destroyCloudMetrics
   const effectScope: typeof import('vue').effectScope
   const getActivePinia: typeof import('pinia').getActivePinia
   const getBaseDirection: typeof import('./chart/markers.js').getBaseDirection
+  const getCloudMetric: typeof import('./api/index.js').getCloudMetric
   const getCurrentInstance: typeof import('vue').getCurrentInstance
   const getCurrentScope: typeof import('vue').getCurrentScope
   const getCurrentWatcher: typeof import('vue').getCurrentWatcher
@@ -39,6 +44,7 @@ declare global {
   const isReadonly: typeof import('vue').isReadonly
   const isRef: typeof import('vue').isRef
   const isShallow: typeof import('vue').isShallow
+  const listCloudMetrics: typeof import('./api/index.js').listCloudMetrics
   const mapActions: typeof import('pinia').mapActions
   const mapGetters: typeof import('pinia').mapGetters
   const mapState: typeof import('pinia').mapState
@@ -70,6 +76,7 @@ declare global {
   const resolveComponent: typeof import('vue').resolveComponent
   const router: typeof import('./router/index.js').default
   const setActivePinia: typeof import('pinia').setActivePinia
+  const setCloudMetricName: typeof import('./chart/indicators/cloudMetrics.js').setCloudMetricName
   const setCloudMetricsChartGetter: typeof import('./chart/indicators/cloudMetrics.js').setCloudMetricsChartGetter
   const setMapStoreSuffix: typeof import('pinia').setMapStoreSuffix
   const shallowReactive: typeof import('vue').shallowReactive
@@ -82,7 +89,9 @@ declare global {
   const toValue: typeof import('vue').toValue
   const triggerRef: typeof import('vue').triggerRef
   const unref: typeof import('vue').unref
+  const use: typeof import('./stores/cloudMetricStore.js').use
   const useAttrs: typeof import('vue').useAttrs
+  const useCloudMetricStore: typeof import('./stores/cloudMetricStore.js').useCloudMetricStore
   const useCssModule: typeof import('vue').useCssModule
   const useCssVars: typeof import('vue').useCssVars
   const useId: typeof import('vue').useId
@@ -93,6 +102,7 @@ declare global {
   const useRouter: typeof import('vue-router').useRouter
   const useSearchParametersStore: typeof import('./stores/searchParameters.js').useSearchParametersStore
   const useSettings: typeof import('./composables/useSettings.js').useSettings
+  const useSimulationStore: typeof import('./stores/simulationStore.js').useSimulationStore
   const useSlots: typeof import('vue').useSlots
   const useTechnicalIndicators: typeof import('./composables/useTechnicalIndicators.js').useTechnicalIndicators
   const useTemplateRef: typeof import('vue').useTemplateRef
@@ -109,6 +119,7 @@ declare global {
   const ws_getTradingSignals_url: typeof import('./api/index.js').ws_getTradingSignals_url
   const ws_kline_url: typeof import('./api/index.js').ws_kline_url
   const ws_signalQualityEvaluate_url: typeof import('./api/index.js').ws_signalQualityEvaluate_url
+  const ws_simulationEvaluate_url: typeof import('./api/index.js').ws_simulationEvaluate_url
   const ws_syncData_url: typeof import('./api/index.js').ws_syncData_url
 }
 // for type re-export
