@@ -1,111 +1,173 @@
-<script setup>
-import { debounce } from 'lodash-es'
-import { ws_allSymbols_url } from '@/api'
-const ws_allSymbols = ws_allSymbols_url
-// 实例化仓库 ✅
-const searchStore = useSearchParametersStore() // 修正命名，更规范
-
-// 全量标的（只存不渲染）
-let allSymbolsRaw = []
-const symbolOptions = ref([])
-
-
-// 获取全量标的
-function fetchAllSymbols() {
-  const ws = new WebSocket(ws_allSymbols)
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ t: new Date().getTime() }))
-  }
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      if (Array.isArray(data)) {
-        allSymbolsRaw = data
-      }
-    } catch (err) {
-      console.error("解析标的列表数据失败:", err)
-    }
-  }
-  ws.onerror = (error) => console.error("WebSocket错误:", error)
-}
-
-// 本地过滤
-function filterSymbols(keyword) {
-  symbolOptions.value = []
-  if (!keyword || !allSymbolsRaw.length) return
-
-  const lowerKeyword = keyword.toLowerCase()
-  const result = []
-  const maxCount = 10
-
-  for (let i = 0; i < allSymbolsRaw.length; i++) {
-    const item = allSymbolsRaw[i]
-    if (item.toLowerCase().includes(lowerKeyword)) {
-      result.push({ label: item, value: item })
-      if (result.length >= maxCount) break
-    }
-  }
-  symbolOptions.value = result
-}
-
-const debouncedFilter = debounce(filterSymbols, 300)
-function remoteMethod(query) {
-  debouncedFilter(query)
-}
-
-onMounted(() => {
-  fetchAllSymbols()
-})
-</script>
-
 <template>
-  <el-form label-position="top" class="selection-form">
-    <div class="form-grid">
-      <!-- 标的（绑定Pinia） ✅ -->
-      <el-form-item label="标的" label-position="left">
-        <el-select v-model="searchStore.symbol" filterable remote :remote-method="remoteMethod" placeholder="请输入代码/名称搜索"
-          style="width: 100%" :loading="false">
-          <el-option v-for="item in symbolOptions" :key="item.value" :label="item.label" :value="item.value" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="复权类型" label-position="left">
-        <el-select v-model="searchStore.adjust_type" placeholder="请选择复权类型" style="width: 100%">
-          <el-option label="不复权" value="none" />
-          <el-option label="前复权" value="front" />
-          <el-option label="后复权" value="back" />
-        </el-select>
-      </el-form-item>
-      <!-- 时间（绑定Pinia） ✅ -->
-      <el-form-item label="开始时间" label-position="left">
-        <el-date-picker v-model="searchStore.startDate" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
-          placeholder="选择开始日期" />
-      </el-form-item>
-      <el-form-item label="结束时间" label-position="left">
-        <el-date-picker v-model="searchStore.endDate" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
-          placeholder="选择结束日期" />
-      </el-form-item>
-
-      <!-- 加载按钮：触发Pinia的onLoad方法 ✅ -->
-      <el-button type="primary" @click="searchStore.onLoad">加载</el-button>
+  <div class="selection-bar">
+    <div class="brand">
+      <div class="brand-logo">AK</div>
+      <div class="brand-text">
+        <span class="brand-title">AKStock</span>
+        <span class="brand-sub">量化信号分析平台</span>
+      </div>
     </div>
-  </el-form>
+
+    <div class="controls">
+      <el-select v-model="searchStore.symbol"
+        class="control-item symbol-select"
+        filterable
+        remote
+        :remote-method="fetchAllSymbols"
+        :loading="symbolLoading"
+        placeholder="输入代码或名称搜索标的"
+        @focus="fetchAllSymbols">
+        <el-option v-for="item in symbolOptions" :key="item.code"
+          :label="item.label" :value="item.code" />
+      </el-select>
+
+      <el-date-picker v-model="dateRange" type="datetimerange"
+        class="control-item date-picker"
+        range-separator="至"
+        start-placeholder="开始日期"
+        end-placeholder="结束日期"
+        value-format="YYYY-MM-DD HH:mm:ss"
+        :clearable="false" />
+
+      <el-select v-model="searchStore.adjust_type" class="control-item adjust-select">
+        <el-option label="不复权" value="none" />
+        <el-option label="前复权" value="front" />
+        <el-option label="后复权" value="back" />
+      </el-select>
+
+      <el-button type="primary" class="search-btn" @click="handleSearch">
+        加载数据
+      </el-button>
+    </div>
+  </div>
 </template>
 
+<script setup>
+import { ws_allSymbols_url } from '@/api'
+
+const searchStore = useSearchParametersStore()
+const symbolOptions = ref([])
+const symbolLoading = ref(false)
+
+const dateRange = ref([searchStore.startDate, searchStore.endDate])
+
+// 拉取所有标的列表
+const fetchAllSymbols = (query) => {
+  symbolLoading.value = true
+  const ws = new WebSocket(ws_allSymbols_url)
+  ws.onopen = () => {
+    ws.send(JSON.stringify({
+      action: 'allSymbols',
+      query: query || '',
+    }))
+  }
+  ws.onmessage = (event) => {
+    let res
+    try {
+      res = JSON.parse(event.data)
+    } catch (e) {
+      console.error('[allSymbols] 解析失败:', e)
+      symbolLoading.value = false
+      ws.close()
+      return
+    }
+    const list = res.data || []
+    symbolOptions.value = list.map(item => ({
+      code: item.code,
+      label: `${item.name || ''} ${item.code}`.trim(),
+    }))
+    symbolLoading.value = false
+    ws.close()
+  }
+  ws.onerror = () => {
+    symbolLoading.value = false
+    ws.close()
+  }
+}
+
+const handleSearch = () => {
+  if (dateRange.value && dateRange.value.length === 2) {
+    searchStore.startDate = dateRange.value[0]
+    searchStore.endDate = dateRange.value[1]
+  }
+  searchStore.onLoad()
+}
+</script>
+
 <style scoped>
-.selection-form {
-  border-radius: 8px;
-  box-shadow: 0 2px 8px #00000008;
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  height: 100%;
+  padding: 0 20px;
 }
 
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  color: #fff;
+  font-weight: 800;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
+}
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.brand-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #e2e8f0;
+  letter-spacing: 0.5px;
+}
+.brand-sub {
+  font-size: 11px;
+  color: #64748b;
 }
 
-:deep(.el-form-item .el-form-item__label) {
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+.control-item {
+  --el-component-size: 34px;
+}
+.symbol-select {
+  flex: 1;
+  max-width: 300px;
+}
+.date-picker {
+  flex: 1;
+  max-width: 320px;
+}
+.adjust-select {
+  width: 108px;
+}
+.search-btn {
+  --el-component-size: 34px;
+  border-radius: 6px;
   font-weight: 600;
-  font-size: 18px;
-  color: rgb(255, 255, 255);
+  padding: 0 22px;
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  border: none;
+}
+.search-btn:hover {
+  opacity: 0.92;
 }
 </style>

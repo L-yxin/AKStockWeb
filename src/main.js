@@ -10,8 +10,13 @@ import { createPinia } from 'pinia'
 // Element Plus
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
+// Element Plus 深色模式变量
+import 'element-plus/theme-chalk/dark/css-vars.css'
 // Element Plus Icons
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+
+// 启用深色模式
+document.documentElement.classList.add('dark')
 
 const app = createApp(App)
 

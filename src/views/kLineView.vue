@@ -1,5 +1,17 @@
 <template>
-  <div id="chart" class="chart" ref="chartEle"></div>
+  <div class="chart-wrap">
+    <div id="chart" class="chart" ref="chartEle"></div>
+
+    <!-- 周期切换工具条（klinecharts setPeriod：{span, type}） -->
+    <div class="period-toolbar">
+      <button v-for="p in PERIODS" :key="periodKey(p)" type="button"
+        class="period-btn" :class="{ active: isActivePeriod(p) }"
+        @click="switchPeriod(p)">
+        {{ p.label }}
+      </button>
+    </div>
+  </div>
+
   <div ref="unifiedTooltip" class="unified-tooltip" v-show="tooltipVisible"
     :style="{ left: tooltipPos.x + 'px', top: tooltipPos.y + 'px' }">
     <!-- K线部分（有值才显示） -->
@@ -7,8 +19,7 @@
       <div class="tooltip-header">{{ formatDateTime(currentKline.timestamp) }}</div>
       <div class="tooltip-row">
         <span class="label">开</span>
-        <span class="value" :class="klineChangeClass(currentKline.open, currentKline.preClose)">{{ currentKline.open
-          }}</span>
+        <span class="value" :class="klineChangeClass(currentKline.open, currentKline.preClose)">{{ currentKline.open }}</span>
       </div>
       <div class="tooltip-row">
         <span class="label">高</span>
@@ -20,16 +31,15 @@
       </div>
       <div class="tooltip-row">
         <span class="label">收</span>
-        <span class="value" :class="klineChangeClass(currentKline.close, currentKline.preClose)">{{ currentKline.close
-          }}</span>
+        <span class="value" :class="klineChangeClass(currentKline.close, currentKline.preClose)">{{ currentKline.close }}</span>
       </div>
       <div class="tooltip-row">
         <span class="label">量</span>
         <span class="value volume">{{ formatVolume(currentKline.volume) }}</span>
       </div>
       <div class="tooltip-per">
-          <span class="label">涨幅</span>
-          <span class="value">{{ ((currentKline.close - currentKline.preClose) / currentKline.preClose * 100).toFixed(2) }}%</span>
+        <span class="label">涨幅</span>
+        <span class="value">{{ ((currentKline.close - currentKline.preClose) / currentKline.preClose * 100).toFixed(2) }}%</span>
       </div>
     </template>
 
@@ -44,9 +54,19 @@
 </template>
 
 <script setup>
-import { init, dispose, registerOverlay, registerIndicator,getSupportedFigures } from 'klinecharts'
-import { RSI,EMA } from 'technicalindicators'
+import { init, dispose, utils } from 'klinecharts'
+
+// 副作用模块：注册自定义指标与覆盖图（引入一次即可）
+import '@/chart/indicators'
+import '@/chart/overlays'
+
+// 标记逻辑与消息表
+import { mesMap, addMarkers, clearAllMarkers } from '@/chart/markers'
+// 云指标生命周期
+import { setCloudMetricsChartGetter, destroyCloudMetrics } from '@/chart/indicators/cloudMetrics'
+
 import { ws_kline_url } from '@/api'
+
 // ==================== Pinia Store ====================
 const searchStore = useSearchParametersStore()
 
@@ -55,13 +75,11 @@ const chart = ref(null)
 let pollTimer = null
 let currentLatestDate = null
 
-const DEFAULT_PAGE_SIZE = 30 * 2
+// 初始/翻页每次请求的 bar 数（K线分页模型：init 与 forward 都按此数量向后端取数）
+const DEFAULT_PAGE_SIZE = 300
 const WS_URL = ws_kline_url
 
-// ==================== 标记相关全局状态 ====================
-const mesMap = new Map() // 按时间戳存储所有消息
-
-// ==================== 工具函数（完整实现） ====================
+// ==================== 工具函数 ====================
 function normalizeToKLineData(item) {
   return {
     timestamp: item.timestamp,
@@ -72,19 +90,24 @@ function normalizeToKLineData(item) {
     volume: item.volume,
   }
 }
+
 const chartEle = ref(null)
 const unifiedTooltip = ref(null)
 const tooltipVisible = ref(false)
 const tooltipMessages = ref([]) // 当前日期对应的交易信号消息列表
 const tooltipPos = ref({ x: 0, y: 0 })
-let currentKline = ref(null)
+const currentKline = ref(null)
 
-// 格式化函数（与之前高质感版本相同）
+// ==================== 时间工具 ====================
+// 后端序列化统一约定：通达信本地时间（无时区）→ 先按 Asia/Shanghai 解释再转 epoch（毫秒）。
+// 因此前端显示 Asia/Shanghai 时刻 = epoch + 8h 后的 UTC 字段；不依赖浏览器本地时区。
+const SHIFT_8H = 8 * 3600 * 1000
+
 function formatDateTime(timestamp) {
   if (!timestamp) return ''
-  const date = new Date(timestamp)
+  const date = new Date(timestamp + SHIFT_8H)
   const pad = (n) => n.toString().padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`
 }
 function formatVolume(vol) {
   if (vol >= 1e9) return (vol / 1e9).toFixed(2) + 'B'
@@ -97,22 +120,49 @@ function klineChangeClass(current, prevClose) {
   return current >= prevClose ? 'up' : 'down'
 }
 function timestampToDateStr(timestampMs) {
-  if (!timestampMs || isNaN(timestampMs) || timestampMs <= 0) return null
-  const date = new Date(timestampMs)
-  if (isNaN(date.getTime())) return null
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  if (!timestampMs || isNaN(timestampMs) || timestampMs <= 0) return null;
+  const date = new Date(timestampMs + SHIFT_8H);
+  if (isNaN(date.getTime())) return null;
+
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const hours = String(date.getUTCHours()).padStart(2, '0');
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(date.getUTCSeconds()).padStart(2, '0');
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
-function addDays(dateStr, days) {
-  if (!dateStr) return null
-  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (!match) return null
-  const year = parseInt(match[1], 10)
-  const month = parseInt(match[2], 10) - 1
-  const day = parseInt(match[3], 10)
-  const date = new Date(year, month, day)
-  date.setDate(date.getDate() + days)
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+function addDays(dateStr, days = 0, hours = 0, minute = 0, second = 0) {
+  if (!dateStr) return null;
+
+  // 正则匹配：日期部分（必须），时间部分（可选，格式 HH:mm:ss）
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2}):(\d{2}))?$/);
+  if (!match) return null;
+
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10) - 1;
+  const day = parseInt(match[3], 10);
+
+  // 如果输入包含时间，则使用提取的值；否则使用传入的参数（默认0）
+  const hh = match[4] !== undefined ? parseInt(match[4], 10) : hours;
+  const mm = match[5] !== undefined ? parseInt(match[5], 10) : minute;
+  const ss = match[6] !== undefined ? parseInt(match[6], 10) : second;
+
+  // 构造 Date 对象（本地时间）
+  const date = new Date(year, month, day, hh, mm, ss);
+  date.setDate(date.getDate() + days);
+
+  // 格式化为 "YYYY-MM-DD HH:mm:ss"
+  const y = date.getFullYear();
+  const mo = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const h = String(date.getHours()).padStart(2, '0');
+  const mi = String(date.getMinutes()).padStart(2, '0');
+  const s = String(date.getSeconds()).padStart(2, '0');
+
+  return `${y}-${mo}-${d} ${h}:${mi}:${s}`;
 }
 
 function todayStr() {
@@ -120,26 +170,78 @@ function todayStr() {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+// ==================== 周期配置与切换 ====================
+// 周期类型取值以 klinecharts 官方类型为准：minute / hour / day / week / month
+const PERIODS = [
+  { label: '1分', type: 'minute', span: 1 },
+  { label: '5分', type: 'minute', span: 5 },
+  { label: '15分', type: 'minute', span: 15 },
+  { label: '30分', type: 'minute', span: 30 },
+  { label: '60分', type: 'hour', span: 1 },
+  { label: '日K', type: 'day', span: 1 },
+  { label: '周K', type: 'week', span: 1 },
+  { label: '月K', type: 'month', span: 1 },
+]
+
+const periodKey = (p) => `${p.span}${p.type}`
+const isActivePeriod = (p) => periodKey(p) === periodKey(searchStore.period)
+
+// klinecharts Period → 后端 period 参数
+// 关键：月线必须传大写 1M（后端 normalize 为 1mon）；小写 1m 会被识别为 1 分钟线
+function periodToBackend(p) {
+  if (!p) return '1d'
+  const { type, span } = p
+  if (type === 'minute') return `${span}m`
+  if (type === 'hour') return `${span}h`
+  if (type === 'day') return '1d'
+  if (type === 'week') return '1w'
+  if (type === 'month') return '1M'
+  return '1d'
+}
+
+function switchPeriod(p) {
+  if (isActivePeriod(p)) return
+  searchStore.setPeriod(p)
+  currentLatestDate = null
+  // 云指标为日级数据：切走日线时清空缓存（避免分钟/小时K上错位匹配），
+  // 切回日线后 calc 会自动重新拉取
+  destroyCloudMetrics()
+  if (chart.value) {
+    chart.value.setPeriod({ type: p.type, span: p.span })
+  }
+}
+
 // ==================== 历史数据请求 ====================
-function fetchHistoryData(symbol, period, startDate, endDate) {
+function fetchHistoryData(symbol, period, startDate, endDate, limit) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(WS_URL)
-    ws.onopen = () => {
-      ws.send(JSON.stringify({
-        action: "history",
-        code: symbol.ticker,
-        period: `${period.span}${period.type === 'day' ? 'd' : period.type[0]}`,
-        adjust_type: searchStore.adjust_type,
-        start_date: startDate,
-        end_date: endDate,
-      }))
-    }
-    ws.onmessage = (event) => {
-      const res = JSON.parse(event.data)
+    const onMessage = (event) => {
+      let res
+      try {
+        res = JSON.parse(event.data)
+      } catch (e) {
+        console.error('[kline] 数据解析失败:', e)
+        reject(e)
+        ws.close()
+        return
+      }
       const bars = (res.data || []).map(normalizeToKLineData).sort((a, b) => a.timestamp - b.timestamp)
       resolve(bars)
       ws.close()
     }
+    ws.onopen = () => {
+      const payload = {
+        action: 'history',
+        code: symbol.ticker,
+        period: periodToBackend(period),
+        adjust_type: searchStore.adjust_type,
+        start_date: startDate,
+        end_date: endDate,
+      }
+      if (limit) payload.limit = limit
+      ws.send(JSON.stringify(payload))
+    }
+    ws.onmessage = onMessage
     ws.onerror = (err) => {
       reject(err)
       ws.close()
@@ -147,721 +249,23 @@ function fetchHistoryData(symbol, period, startDate, endDate) {
   })
 }
 
-// ==================== 标记方向与偏移处理 ====================
-function getBaseDirection(market, type) {
-  if (market === "stock") {
-    if (type === "B" || type === "买") return 1
-    if (type === "S" || type === "卖") return -1
-    if (type === "T") return -1
-  } else if (market === "futures") {
-    if (type === "L" || type === "多开" || type === "CS" || type === "空平") return 1
-    if (type === "S" || type === "空开" || type === "CL" || type === "多平") return -1
-  } else if (market === "predict") {
-    if (type === "BULL" || type === "多") return 1
-    if (type === "BEAR" || type === "空") return -1
-  }
+// 每周期每交易日的 bar 数（A股 4 小时 = 240 分钟，用于把「按根数分页」换算成日期窗口）
+function barsPerDay(type, span) {
+  if (type === 'minute') return 240 / span
+  if (type === 'hour') return 4 / span
+  if (type === 'day') return 1
+  if (type === 'week') return 1 / 5
+  if (type === 'month') return 1 / 21
   return 1
 }
 
-function prepareMarkersWithOffset(configs) {
-  const grouped = new Map()
-  configs.forEach(cfg => {
-    const ts = cfg.timestamp
-    const dir = getBaseDirection(cfg.market || 'stock', cfg.type)
-    const key = `${ts}_${dir}`
-    if (!grouped.has(key)) grouped.set(key, [])
-    grouped.get(key).push(cfg)
-  })
-
-  const processed = []
-  grouped.forEach((items) => {
-    items.forEach((item, index) => {
-      processed.push({
-        ...item,
-        _offsetIndex: index,
-        _totalInGroup: items.length,
-        _direction: getBaseDirection(item.market || 'stock', item.type)
-      })
-    })
-  })
-  return processed
+// 容纳 limit 根 bar 所需自然日窗口（含冗余，后端再按 limit 截断）
+function windowDaysFor(period, limit) {
+  const bpd = barsPerDay(period.type, period.span)
+  return Math.ceil(limit / bpd) + 3
 }
 
-// ==================== 注册自定义 Overlay（全局一次） ====================
-registerOverlay({
-  name: 'simpleAnnotation2',
-  needDefaultPointFigure: true,
-  lock: true,
-  totalStep: 1,
-  createPointFigures: function (param) {
-    const { overlay, coordinates } = param
-    const point = overlay.points[0]
-    const market = point.market
-    const type = overlay.extendData
-    const offsetIndex = point.offsetIndex || 0
-    const total = point.totalInGroup || 1
-    const direction = point.direction || 2.5
-
-    const centerX = coordinates[0].x
-    const baseY = coordinates[0].y
-
-    const offsetStep = 27
-    const groupOffset = (offsetIndex - (total - 1) / 2) * offsetStep
-
-
-
-    const baseStartDistance = 70;
-    const baseEndDistance = 10;
-    const extraOffset = 55; // 额外移动的距离
-    let startDistance = baseStartDistance + (direction === -1 ? extraOffset : (direction !== -1 ? extraOffset : 0));
-    let endDistance = baseEndDistance + (direction === -1 ? extraOffset : (direction !== -1 ? extraOffset : 0));
-
-
-    const lineEndY = baseY + direction * endDistance
-    const lineStartY = baseY + direction * startDistance + groupOffset
-
-    const getColor = (market, type) => {
-      if (market === "stock") {
-        if (type === "B" || type === "买") return '#ef5350'
-        if (type === "S" || type === "卖") return '#26a69a'
-        if (type === "T") return '#42a5f5'
-      } else if (market === "futures") {
-        if (type === "L" || type === "多开") return '#ef5350'
-        if (type === "S" || type === "空开") return '#26a69a'
-        if (type === "CL" || type === "多平") return '#42a5f5'
-        if (type === "CS" || type === "空平") return '#ffa726'
-      } else if (market === "predict") {
-        if (type === "BULL" || type === "多") return '#ef5350'
-        if (type === "BEAR" || type === "空") return '#26a69a'
-      }
-      return '#888888'
-    }
-
-    const color = getColor(market, type)
-
-    return [
-      {
-        key: 'line',
-        type: 'line',
-        attrs: {
-          coordinates: [
-            { x: centerX, y: lineStartY },
-            { x: centerX, y: lineEndY }
-          ]
-        },
-        styles: {
-          style: 'dashed',
-          color: color,
-          size: 1.8,
-          dashedValue: [3, 3]
-        }
-      },
-      {
-        key: 'text',
-        type: 'text',
-        attrs: {
-          x: centerX,
-          y: lineStartY - direction * 6,
-          text: overlay.extendData || '',
-          align: 'center',
-          baseline: 'middle'
-        },
-        styles: {
-          color: '#ffffff',
-          size: 12,
-          weight: 'bold',
-          backgroundColor: color,
-          paddingLeft: 8,
-          paddingRight: 8,
-          paddingTop: 4,
-          paddingBottom: 4,
-          borderRadius: 4,
-        }
-      }
-    ]
-  }
-})
-
-registerOverlay({
-  name: 'textTip',
-  totalStep: 1,              // 只需在第一步点下就完成
-  lock : true,                // 锁定，禁止用户交互修改
-  createPointFigures: ({ coordinates, overlay }) => {
-    // 从 extendData 中取出要显示的文字，没有则用默认值
-    const text = overlay.extendData?.text ?? '标注'
-
-    return {
-      type: 'text',
-      attrs: {
-        x: coordinates[0].x,
-        y: coordinates[0].y,
-        text: text
-      },
-      styles: {
-        style: 'stroke',
-        color: '#FFF600',     // 黄色
-        size: 12,
-        weight: 'normal',
-        family: 'Arial'
-      }
-    }
-  }
-})
-registerIndicator({
-  name: 'RSI',
-  shortName: 'RSI',
-  series: 'price',
-  calcParams: [6, 12, 24],
-  precision: 2,
-  figures: [
-   
-  ],
-  calc: (dataList, indicator) => {
-    const periods = indicator.calcParams
-    const closePrices = dataList.map(item => item.close)
-    const total = dataList.length
-
-    // 初始化结果数组，所有位置初始为 null
-    const results = Array(total).fill().map(() => ({ rsi1: null, rsi2: null, rsi3: null }))
-    indicator.figures = [] // 清空原有图形定义
-    periods.forEach((period, idx) => {
-      // 计算 RSI，返回值长度 = total - period
-      const rsiValues = RSI.calculate({ period, values: closePrices })
-      const key = `rsi${idx + 1}`
-      // 从 period 索引开始填充
-      for (let i = 0; i < rsiValues.length; i++) {
-        results[period + i][key] = rsiValues[i]
-      }
-      indicator.figures.push(
-        { key: `rsi${idx + 1}`, title: `RSI${idx + 1}: `, type: 'line' }
-      )
-    })
-
-    return results
-  }
-})
-registerIndicator({
-  name: 'RSISpeedWithAcc',
-  shortName: 'RSI S&A',
-  series: 'price',
-  calcParams: [14],         // RSI周期，默认14
-  precision: 2,
-  figures: [
-    { key: 'speed', title: '速度: ', type: 'line' },
-    { key: 'acc',   title: '加速度: ', type: 'line' }
-  ],
-  calc: (dataList, indicator) => {
-    const period = indicator.calcParams[0]        // RSI周期
-    const closePrices = dataList.map(item => item.close)
-    const total = dataList.length
-
-    const results = Array(total).fill().map(() => ({ speed: null, acc: null }))
-    if (total === 0) return results
-
-    // ---------- 1. 计算 RSI 序列 ----------
-    const rsi = Array(total).fill(null)
-    if (total > period) {
-      let gains = 0, losses = 0
-
-      // 计算初始平均涨跌幅（前 period 根K线）
-      for (let i = 1; i <= period; i++) {
-        const change = closePrices[i] - closePrices[i-1]
-        if (change >= 0) gains += change
-        else losses -= change
-      }
-      let avgGain = gains / period
-      let avgLoss = losses / period
-      let rs = avgLoss === 0 ? Infinity : avgGain / avgLoss
-      rsi[period] = 100 - 100 / (1 + rs)
-
-      // 递归计算后续 RSI（Wilder 平滑）
-      for (let i = period + 1; i < total; i++) {
-        const change = closePrices[i] - closePrices[i-1]
-        const gain = change > 0 ? change : 0
-        const loss = change < 0 ? -change : 0
-        avgGain = (avgGain * (period - 1) + gain) / period
-        avgLoss = (avgLoss * (period - 1) + loss) / period
-        rs = avgLoss === 0 ? Infinity : avgGain / avgLoss
-        rsi[i] = 100 - 100 / (1 + rs)
-      }
-    }
-
-    // ---------- 2. 计算速度（RSI 的一阶差分）----------
-    const speed = Array(total).fill(null)
-    for (let i = 1; i < total; i++) {
-      if (rsi[i] !== null && rsi[i-1] !== null) {
-        speed[i] = rsi[i] - rsi[i-1]
-      }
-    }
-
-    // ---------- 3. 计算加速度（速度的一阶差分）----------
-    const acc = Array(total).fill(null)
-    for (let i = 2; i < total; i++) {
-      if (speed[i] !== null && speed[i-1] !== null) {
-        acc[i] = speed[i] - speed[i-1]
-      }
-    }
-
-    // 填充结果
-    for (let i = 0; i < total; i++) {
-      results[i].speed = speed[i]
-      results[i].acc = acc[i]
-    }
-
-    return results
-  }
-})
-
-registerIndicator({
-  name: 'Relative high and low points',
-  shortName: 'HL',
-  series: 'price',
-  calcParams: [1, 5],            // [周期, step]
-  precision: 2,
-  figures: [],
-  calc: (dataList, indicator) => {
-    const period = indicator.calcParams[0] ?? 1
-    const step = indicator.calcParams[1] ?? 5
-    const highs = dataList.map(d => d.high)
-    const lows = dataList.map(d => d.low)
-    const total = dataList.length
-
-    // ----- EMA -----
-    const HighEMA = EMA.calculate({ period, values: highs })
-    const LowEMA = EMA.calculate({ period, values: lows })
-    // ----- 找出全部拐点（不分 len）-----
-    const highPivots = []  // { index, price }
-    const lowPivots = []
-    for (let i = 2; i < total ; i++) {
-      // 高点
-      if (HighEMA[i - 2] <= HighEMA[i-1] && HighEMA[i-1] >= HighEMA[i]) {
-        const start = Math.max(0, i - step)
-        const maxHigh = Math.max(...highs.slice(start, i+1))
-        highPivots.push({ index: i, price: maxHigh })
-      }
-      // 低点
-      if (LowEMA[i - 2] >= LowEMA[i-1] && LowEMA[i-1] <= LowEMA[i]) {
-        const start = Math.max(0, i - step)
-        const minLow = Math.min(...lows.slice(start, i+1))
-        lowPivots.push({ index: i, price: minLow })
-      }
-    }
-
-    // ----- 生成折线数组（每个时点当前有效的价格）-----
-    const buildLine = (pivots) => {
-      const line = new Array(total).fill(null)
-      if (pivots.length === 0) return line
-
-      let pivIdx = 0
-      let currentPrice = null
-      for (let i = 0; i < total; i++) {
-        // 如果到了新极点，更新价格
-        if (pivIdx < pivots.length && i >= pivots[pivIdx].index) {
-          currentPrice = pivots[pivIdx].price
-          pivIdx++
-        }
-        line[i] = currentPrice
-      }
-      return line
-    }
-
-    const highLine = buildLine(highPivots)   // 高点折线值
-    const lowLine = buildLine(lowPivots)     // 低点折线值
-
-    // ----- 结果数组 -----
-    const results = new Array(total)
-    for (let i = 0; i < total; i++) {
-      results[i] = {}
-    }
-
-    // 清空 figures
-    indicator.figures.splice(0, indicator.figures.length)
-
-   
-
-    const highKey = `high`
-    const lowKey = `low`
-
-    // 填充数据
-    for (let i = 0; i < total; i++) {
-      results[i][highKey] = highLine[i]
-      results[i][lowKey] = lowLine[i]
-    }
-
-    // 图形定义
-    indicator.figures.push({
-      key: highKey,
-      title: `高: `,
-      type: 'line',
-      styles: () => ({ color: '#E57373', size: 1 })
-    })
-    indicator.figures.push({
-      key: lowKey,
-      title: `低: `,
-      type: 'line',
-      styles: () => ({ color: '#81C784', size: 1 })
-    })  
-    
-
-    return results
-  }
-})
-
-registerIndicator({
-  name: 'RelativeHighPoints',
-  shortName: 'HighPts',
-  series: 'price',
-  calcParams: [1, 5],
-  precision: 2,
-  figures: [],
-  calc: (dataList, indicator) => {
-    const params = indicator.calcParams;
-    const groupCount = Math.floor(params.length / 2);
-    const highs = dataList.map(d => d.high);
-    const total = dataList.length;
-
-    indicator.figures.splice(0, indicator.figures.length);
-    const results = new Array(total);
-    for (let i = 0; i < total; i++) results[i] = {};
-
-    for (let g = 0; g < groupCount; g++) {
-      const period = params[g * 2] ?? 1;
-      const step = params[g * 2 + 1] ?? 5;
-
-      const HighEMA = EMA.calculate({ period, values: highs });
-      const highPivots = [];
-      for (let i = 2; i < total; i++) {
-        if (HighEMA[i] == null) continue;
-        if (HighEMA[i - 2] <= HighEMA[i - 1] && HighEMA[i - 1] >= HighEMA[i]) {
-          const start = Math.max(0, i - step);
-          const maxHigh = Math.max(...highs.slice(start, i + 1));
-          highPivots.push({ index: i, price: maxHigh });
-        }
-      }
-
-      const line = new Array(total).fill(null);
-      if (highPivots.length > 0) {
-        let pivIdx = 0, currentPrice = null;
-        for (let i = 0; i < total; i++) {
-          if (pivIdx < highPivots.length && i >= highPivots[pivIdx].index) {
-            currentPrice = highPivots[pivIdx].price;
-            pivIdx++;
-          }
-          line[i] = currentPrice;
-        }
-      }
-
-      const key = `high_${g + 1}`;
-      for (let i = 0; i < total; i++) results[i][key] = line[i];
-
-      const colors = ['#E57373', '#EF5350', '#F44336', '#E53935', '#D32F2F'];
-      indicator.figures.push({
-        key,
-        title: `高${g + 1} (${period},${step})`,
-        type: 'line',
-        styles: () => ({ color: colors[g % colors.length], size: 1 })
-      });
-    }
-    return results;
-  }
-});
-
-
-registerIndicator({
-  name: 'RelativeLowPoints',
-  shortName: 'LowPts',
-  series: 'price',
-  calcParams: [1, 5],
-  precision: 2,
-  figures: [],
-  calc: (dataList, indicator) => {
-    const params = indicator.calcParams;
-    const groupCount = Math.floor(params.length / 2);
-    const lows = dataList.map(d => d.low);
-    const total = dataList.length;
-
-    indicator.figures.splice(0, indicator.figures.length);
-    const results = new Array(total);
-    for (let i = 0; i < total; i++) results[i] = {};
-
-    for (let g = 0; g < groupCount; g++) {
-      const period = params[g * 2] ?? 1;
-      const step = params[g * 2 + 1] ?? 5;
-
-      const LowEMA = EMA.calculate({ period, values: lows });
-      const lowPivots = [];
-      for (let i = 2; i < total; i++) {
-        if (LowEMA[i] == null) continue;
-        if (LowEMA[i - 2] >= LowEMA[i - 1] && LowEMA[i - 1] <= LowEMA[i]) {
-          const start = Math.max(0, i - step);
-          const minLow = Math.min(...lows.slice(start, i + 1));
-          lowPivots.push({ index: i, price: minLow });
-        }
-      }
-
-      const line = new Array(total).fill(null);
-      if (lowPivots.length > 0) {
-        let pivIdx = 0, currentPrice = null;
-        for (let i = 0; i < total; i++) {
-          if (pivIdx < lowPivots.length && i >= lowPivots[pivIdx].index) {
-            currentPrice = lowPivots[pivIdx].price;
-            pivIdx++;
-          }
-          line[i] = currentPrice;
-        }
-      }
-
-      const key = `low_${g + 1}`;
-      for (let i = 0; i < total; i++) results[i][key] = line[i];
-
-      const colors = ['#81C784', '#66BB6A', '#4CAF50', '#43A047', '#388E3C'];
-      indicator.figures.push({
-        key,
-        title: `低${g + 1} (${period},${step})`,
-        type: 'line',
-        styles: () => ({ color: colors[g % colors.length], size: 1 })
-      });
-    }
-    return results;
-  }
-});
-
-
-
-registerIndicator({
-  name: 'VolumeNewLowDays',
-  shortName: 'VolNLD',
-  series: 'VolumeNewLowDays',
-  calcParams: [400],            // [max_lookback]，0=回看全部历史
-  precision: 0,
-  figures: [
-    {
-      key: 'days',
-      title: '距上次更低量的天数',
-      type: 'line',
-      styles: () => ({ color: '#FF5722', size: 1 })
-    },
-  ],
-  calc: (dataList, indicator) => {
-    const maxLookback = indicator.calcParams[0] ?? 400;
-    const volumes = dataList.map(d => d.volume);
-    const total = dataList.length;
-    const results = new Array(total);
-
-    for (let i = 0; i < total; i++) {
-      if (i === 0) {
-        results[i] = { days: 0 }; // 第一根无前序数据
-        continue;
-      }
-
-      // 窗口起点：maxLookback<=0 回看全部
-      const start = maxLookback <= 0 ? 0 : Math.max(0, i - maxLookback);
-
-      // 从 i-1 往前找第一个小于 volumes[i] 的位置
-      let days = -1; // 初始-1表示未找到
-      for (let j = i - 1; j >= start; j--) {
-        if (volumes[j] < volumes[i]) {
-          days = i - j; // 距离当前的天数
-          break;
-        }
-      }
-
-      // 如果未找到（即当前值是窗口内最低），则返回窗口长度（即创了窗口长度那么多天的新低）
-      if (days === -1) {
-        days = i - start; // 窗口内所有值都大于等于当前，相当于创了 (i-start) 天新低
-        // 若回看全部且找不到，则 days = i（即从第0根到现在的总天数）
-      }
-
-      results[i] = { days };
-    }
-    return results;
-  }
-});
-
-// ===========================================================================
-// 1. 核心工具函数：连续变化统计（支持回看窗口）
-// ===========================================================================
-/**
- * 统计阶梯线连续上升/下降的阶梯数（支持回看窗口限制）
- * @param {number[]} sequence - 阶梯线序列（含 null/undefined 表示无效）
- * @param {number} maxBacklook - 最大回看 K 线数（0=全部历史）
- * @returns {number[]}
- */
-function continuousChange(sequence, maxBacklook = 0) {
-  const n = sequence.length;
-  const out = new Array(n).fill(0);
-  let lastValidIdx = -1;          // 最近有效值的索引
-  let prevVal = null;             // 最近有效值
-  let direction = 0;              // 当前趋势方向：1上升，-1下降
-  let count = 0;                  // 当前计数值（带符号）
-
-  for (let i = 0; i < n; i++) {
-    const val = sequence[i];
-    if (val == null) {
-      out[i] = 0;
-      continue;
-    }
-
-    // 判断是否需要重置（无前序或超出窗口）
-    if (lastValidIdx === -1 || (maxBacklook > 0 && i - lastValidIdx > maxBacklook)) {
-      // 新趋势开始，默认视为上升，计数为1
-      count = 1;
-      direction = 1;
-      out[i] = count;
-      prevVal = val;
-      lastValidIdx = i;
-      continue;
-    }
-
-    // 有前序且在窗口内
-    if (val > prevVal) {
-      if (direction === 1) {
-        count++;          // 延续上升
-      } else {
-        direction = 1;    // 方向转升，重置计数为1
-        count = 1;
-      }
-    } else if (val < prevVal) {
-      if (direction === -1) {
-        count--;          // 延续下降（绝对值增加）
-      } else {
-        direction = -1;   // 方向转降，重置计数为-1
-        count = -1;
-      }
-    } else {
-      // 相等，计数不变，方向不变
-    }
-
-    out[i] = count;
-    prevVal = val;
-    lastValidIdx = i;
-  }
-  return out;
-}
-
-// ===========================================================================
-// 2. 注册连续变化指标（基于相对高低点阶梯线）
-// ===========================================================================
-registerIndicator({
-  name: 'ContinuousChange',
-  shortName: 'ContChg',
-  series: 'price',
-  // 参数顺序：[period, step, maxBacklook, type]
-  // type: 'high' 或 'low'
-  calcParams: [1, 5, 0, 0],
-  precision: 0,
-  figures: [
-    {
-      key: 'value',
-      title: '连续变化数',
-      type: 'line',
-      styles: () => ({ color: '#FFB74D', size: 1 })
-    }
-  ],
-  calc: (dataList, indicator) => {
-    const params = indicator.calcParams;
-    const period = params[0] ?? 1;
-    const step = params[1] ?? 5;
-    const maxBacklook = params[2] ?? 0;
-    const type = params[3] ?? 0;
-
-    const priceArr = dataList.map(d => (type === 1 ? d.high : d.low));
-    const total = dataList.length;
-
-    // ---- 计算 EMA（沿用通达信 EMA 计算，此处使用 EMA.calculate，确保已加载） ----
-    const ema = EMA.calculate({ period, values: priceArr });
-
-    // ---- 寻找拐点 ----
-    const pivots = [];
-    for (let i = 2; i < total; i++) {
-      if (ema[i] == null || ema[i-1] == null || ema[i-2] == null) continue;
-      const isHigh = (type === 1);
-      const condition = isHigh
-        ? (ema[i-2] <= ema[i-1] && ema[i-1] >= ema[i])
-        : (ema[i-2] >= ema[i-1] && ema[i-1] <= ema[i]);
-      if (condition) {
-        const start = Math.max(0, i - step);
-        const slice = priceArr.slice(start, i + 1);
-        const extreme = isHigh ? Math.max(...slice) : Math.min(...slice);
-        pivots.push({ index: i, price: extreme });
-      }
-    }
-
-    // ---- 构建阶梯线 ----
-    const stepLine = new Array(total).fill(null);
-    if (pivots.length > 0) {
-      let pIdx = 0;
-      let current = null;
-      for (let i = 0; i < total; i++) {
-        if (pIdx < pivots.length && i >= pivots[pIdx].index) {
-          current = pivots[pIdx].price;
-          pIdx++;
-        }
-        stepLine[i] = current;
-      }
-    }
-
-    // ---- 计算连续变化 ----
-    const changes = continuousChange(stepLine, maxBacklook);
-
-    // ---- 组装返回 ----
-    const results = new Array(total);
-    for (let i = 0; i < total; i++) {
-      results[i] = { value: changes[i] };
-    }
-    return results;
-  }
-});
-
-// ==================== 对外暴露的标记添加方法 ====================
-function addMarkers(chartInstance, configs, market = 'stock') {
-  if (!chartInstance) return
-
-  let types = new Set()
-  if (market === "stock") {
-    types = new Set(["B", "S", "T", "买", "卖"])
-  } else if (market === "futures") {
-    types = new Set(["L", "S", "CL", "CS", "多开", "空开", "多平", "空平"])
-  } else if (market === "predict") {
-    types = new Set(["BULL", "BEAR", "多", "空"])
-  } else {
-    throw new Error("unsupported market")
-  }
-
-  const fullConfigs = configs.map(c => ({ ...c, market }))
-  const processed = prepareMarkersWithOffset(fullConfigs)
-
-  for (const config of processed) {
-    const { timestamp, value, mes, type, _offsetIndex, _totalInGroup, _direction } = config
-    if (!types.has(type)) throw new Error(`unsupported type: ${type}`)
-
-    // 存入消息 Map
-    if (!mesMap.has(timestamp)) mesMap.set(timestamp, [])
-    if (!mesMap.get(timestamp).includes(mes)) mesMap.get(timestamp).push(mes)
-
-    chartInstance.createOverlay({
-      name: 'simpleAnnotation2',
-      extendData: type,
-      points: [{
-        timestamp,
-        value,
-        mes,
-        market,
-        offsetIndex: _offsetIndex,
-        totalInGroup: _totalInGroup,
-        direction: _direction
-      }]
-    })
-  }
-}
-
-function clearAllMarkers(chartInstance) {
-  if (!chartInstance) return
-  // 注意：KLineChart 没有直接清除所有 overlay 的 API，需要遍历删除
-  // 这里可根据实际 overlay id 存储逻辑进行扩展
-  mesMap.clear()
-  chartInstance.removeOverlay()
-}
+// ==================== 十字光标 / 自定义 Tooltip ====================
 function crosshairHandler(event) {
   if (!event) {
     tooltipVisible.value = false
@@ -888,36 +292,31 @@ function crosshairHandler(event) {
     return
   }
 
-  currentKline.value = kline
+  // 浅拷贝，避免直接修改图表内部数据对象
+  currentKline.value = { ...kline }
   currentKline.value.preClose = result.dataIndex > 0 ? dataList[result.dataIndex - 1].close : kline.open
   tooltipPos.value = { x: x + 15, y: y + 15 }
 
   // 获取该时间戳的交易信号消息
   const ts = kline.timestamp
-  const messages = mesMap.get(ts) || []
-  tooltipMessages.value = messages
+  tooltipMessages.value = mesMap.get(ts) || []
 
   tooltipVisible.value = true
 }
+
 function disableCrosshair() {
-  const chart = klineRef.value?.chart
-  if (chart && crosshairHandler) {
-    chart.unsubscribeAction('onCrosshairChange', crosshairHandler)
+  if (chart.value) {
+    chart.value.unsubscribeAction('onCrosshairChange', crosshairHandler)
   }
 }
-// ==================== 图表初始化 ====================
-const initChart = () => {
-  dispose('chart')
-  chart.value = null
-  currentLatestDate = null
 
-  chart.value = init('chart', { timestampType: 'millisecond' })
-
-  chart.value.setStyles({
+// 图表深色主题样式（A股红涨绿跌配色）
+function getChartStyles() {
+  return {
     grid: {
       show: true,
-      horizontal: { show: true, size: 1, color: '#EDEDED55', style: 'dashed', dashedValue: [2, 2] },
-      vertical: { show: true, size: 1, color: '#EDEDED55', style: 'dashed', dashedValue: [2, 2] }
+      horizontal: { show: true, size: 1, color: 'rgba(148, 163, 184, 0.10)', style: 'dashed', dashedValue: [2, 2] },
+      vertical: { show: true, size: 1, color: 'rgba(148, 163, 184, 0.08)', style: 'dashed', dashedValue: [2, 2] }
     },
     candle: {
       type: 'candle_solid',
@@ -929,6 +328,29 @@ const initChart = () => {
         downBorderColor: '#22c55e',
         upWickColor: '#ef4444',
         downWickColor: '#22c55e'
+      },
+      priceMark: {
+        show: true,
+        high: { show: true, color: '#9aa4b2', textMargin: 5, textSize: 10 },
+        low: { show: true, color: '#9aa4b2', textMargin: 5, textSize: 10 },
+        last: {
+          show: true,
+          compareRule: 'current_open',
+          upColor: '#ef4444',
+          downColor: '#22c55e',
+          noChangeColor: '#888888',
+          line: { show: true, style: 'dashed', dashedValue: [4, 4], size: 1 },
+          text: {
+            show: true, style: 'fill', size: 11,
+            paddingLeft: 4, paddingTop: 4, paddingRight: 4, paddingBottom: 4,
+            borderStyle: 'solid', borderSize: 0, borderColor: 'transparent',
+            color: '#FFFFFF', family: 'Helvetica Neue', weight: 'normal', borderRadius: 2
+          }
+        }
+      },
+      tooltip: {
+        showRule: 'none',      // 内置 K 线提示关闭，使用自定义增强 Tooltip
+        showType: 'standard'
       }
     },
     indicator: {
@@ -937,31 +359,157 @@ const initChart = () => {
         borderStyle: 'solid',
         borderSize: 1,
         borderDashedValue: [2, 2],
-        upColor: 'rgba(249, 40, 85, .7)',
-        downColor: 'rgba(45, 192, 142, .7)',
-        noChangeColor: '#888888'
+        upColor: 'rgba(239, 68, 68, .75)',
+        downColor: 'rgba(34, 197, 94, .75)',
+        noChangeColor: '#6b7280'
       }],
+      lines: [
+        { style: 'solid', smooth: false, size: 1, dashedValue: [2, 2], color: '#f59e0b' },
+        { style: 'solid', smooth: false, size: 1, dashedValue: [2, 2], color: '#3b82f6' },
+        { style: 'solid', smooth: false, size: 1, dashedValue: [2, 2], color: '#a855f7' },
+        { style: 'solid', smooth: false, size: 1, dashedValue: [2, 2], color: '#06b6d4' },
+        { style: 'solid', smooth: false, size: 1, dashedValue: [2, 2], color: '#f472b6' }
+      ],
+      lastValueMark: {
+        show: false,
+        text: { show: false, style: 'fill', color: '#FFFFFF', size: 12 }
+      },
+      tooltip: {
+        showRule: 'always',
+        showType: 'standard',
+        title: {
+          show: true, showName: true, showParams: true,
+          size: 12, family: 'Helvetica Neue', weight: 'normal',
+          color: '#cbd5e1', marginLeft: 8, marginTop: 4, marginRight: 8, marginBottom: 4
+        },
+        legend: {
+          size: 12, family: 'Helvetica Neue', weight: 'normal',
+          color: '#94a3b8', marginLeft: 8, marginTop: 4, marginRight: 8, marginBottom: 4,
+          defaultValue: 'n/a'
+        }
+      }
+    },
+    xAxis: {
+      show: true,
+      size: 'auto',
+      axisLine: { show: true, color: '#2a3140', size: 1 },
+      tickText: { show: true, color: '#8b93a7', family: 'Helvetica Neue', weight: 'normal', size: 11, marginStart: 4, marginEnd: 4 },
+      tickLine: { show: true, size: 1, length: 3, color: '#2a3140' }
+    },
+    yAxis: {
+      show: true,
+      size: 'auto',
+      axisLine: { show: true, color: '#2a3140', size: 1 },
+      tickText: { show: true, color: '#8b93a7', family: 'Helvetica Neue', weight: 'normal', size: 11, marginStart: 4, marginEnd: 4 },
+      tickLine: { show: true, size: 1, length: 3, color: '#2a3140' }
+    },
+    separator: {
+      size: 1,
+      color: '#232a36',
+      fill: true,
+      activeBackgroundColor: 'rgba(59, 130, 246, .12)'
+    },
+    crosshair: {
+      show: true,
+      horizontal: {
+        show: true,
+        line: { show: true, style: 'dashed', dashedValue: [4, 2], size: 1, color: 'rgba(148, 163, 184, 0.45)' },
+        text: {
+          show: true, style: 'fill', color: '#e2e8f0', size: 11,
+          borderStyle: 'solid', borderDashedValue: [2, 2], borderSize: 1,
+          borderColor: '#334155', borderRadius: 2,
+          paddingLeft: 4, paddingRight: 4, paddingTop: 4, paddingBottom: 4,
+          backgroundColor: '#334155'
+        }
+      },
+      vertical: {
+        show: true,
+        line: { show: true, style: 'dashed', dashedValue: [4, 2], size: 1, color: 'rgba(148, 163, 184, 0.45)' },
+        text: {
+          show: true, style: 'fill', color: '#e2e8f0', size: 11,
+          borderStyle: 'solid', borderDashedValue: [2, 2], borderSize: 1,
+          borderColor: '#334155', borderRadius: 2,
+          paddingLeft: 4, paddingRight: 4, paddingTop: 4, paddingBottom: 4,
+          backgroundColor: '#334155'
+        }
+      }
+    },
+    overlay: {
+      point: {
+        color: '#3b82f6', borderColor: 'rgba(59, 130, 246, 0.35)', borderSize: 1, radius: 5,
+        activeColor: '#3b82f6', activeBorderColor: 'rgba(59, 130, 246, 0.35)', activeBorderSize: 3, activeRadius: 5
+      },
+      line: { style: 'solid', smooth: false, color: '#3b82f6', size: 1, dashedValue: [2, 2] },
+      rect: { style: 'fill', color: 'rgba(59, 130, 246, 0.25)', borderColor: '#3b82f6', borderSize: 1, borderRadius: 0, borderStyle: 'solid', borderDashedValue: [2, 2] },
+      polygon: { style: 'fill', color: '#3b82f6', borderColor: '#3b82f6', borderSize: 1, borderStyle: 'solid', borderDashedValue: [2, 2] },
+      circle: { style: 'fill', color: 'rgba(59, 130, 246, 0.25)', borderColor: '#3b82f6', borderSize: 1, borderStyle: 'solid', borderDashedValue: [2, 2] },
+      arc: { style: 'solid', color: '#3b82f6', size: 1, dashedValue: [2, 2] },
+      text: {
+        style: 'fill', color: '#FFFFFF', size: 12, family: 'Helvetica Neue', weight: 'normal',
+        borderStyle: 'solid', borderDashedValue: [2, 2], borderSize: 0, borderRadius: 2, borderColor: '#3b82f6',
+        paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0, backgroundColor: '#3b82f6'
+      }
+    }
+  }
+}
+
+// ==================== 图表初始化 ====================
+const initChart = () => {
+  dispose('chart')
+  chart.value = null
+  currentLatestDate = null
+
+  // v10 时间戳统一为毫秒，不再需要 timestampType；locale/timezone 走 init 选项
+  chart.value = init('chart', {
+    locale: 'zh-CN',
+    timezone: 'Asia/Shanghai'
+  })
+
+  chart.value.setStyles(getChartStyles())
+
+  // 图表上方（crosshair）时间精确到秒：klinecharts v10 的模板由周期决定，
+  // 分钟级模板为 'YYYY-MM-DD HH:mm'（无秒），通过官方 setFormatter 在渲染
+  // crosshair 时把模板补齐到秒；其余位置（xAxis/tooltip）保持原模板。
+  const crosshairSecondsTemplate = (template) => {
+    if (/:mm$/.test(template)) return `${template}:ss`
+    if (template.indexOf('HH') === -1) return `${template} 00:00:00`
+    return template
+  }
+  chart.value.setFormatter({
+    formatDate({ dateTimeFormat, timestamp, template, type }) {
+      if (type === 'crosshair') {
+        template = crosshairSecondsTemplate(template)
+      }
+      return utils.formatDate(dateTimeFormat, timestamp, template)
     }
   })
 
   const targetSymbol = searchStore.symbol || 'sh000001'
   chart.value.setSymbol({ ticker: targetSymbol })
-  chart.value.setPeriod({ span: 1, type: 'day' })
-  chart.value.setLocale('zh-CN')
+  // 周期以 store 为准（用户切换后由 store 记忆，重新加载不重置回日线）
+  chart.value.setPeriod({ type: searchStore.period.type, span: searchStore.period.span })
 
   chart.value.setDataLoader({
     async getBars({ type, timestamp, symbol, period, callback }) {
       try {
         const today = todayStr()
         if (type === 'init') {
-          const startDate = searchStore.startDate || addDays(today, -DEFAULT_PAGE_SIZE + 1)
+          // 分页模型：只取最近 DEFAULT_PAGE_SIZE 根（按周期换算日期窗口），
+          // 不一次性请求用户设定的整个日期区间，否则分钟周期会一次性灌入上万根，
+          // 且数据源边界早于用户 startDate 时永远无法正确翻页
           const endDate = searchStore.endDate || today
-          const bars = await fetchHistoryData(symbol, period, startDate, endDate)
+          const winStart = addDays(endDate, -windowDaysFor(period, DEFAULT_PAGE_SIZE))
+          const startDate = (searchStore.startDate && winStart < searchStore.startDate)
+            ? searchStore.startDate
+            : winStart
+          const bars = await fetchHistoryData(symbol, period, startDate, endDate, DEFAULT_PAGE_SIZE)
           if (bars.length > 0) {
             currentLatestDate = timestampToDateStr(bars[bars.length - 1].timestamp)
           }
-          const hasMoreOld = bars.length > 0
-          callback(bars, { forward: hasMoreOld, backward: false })
+          // 已触达用户设定起点 → 不再提供更旧数据
+          const reachedUserStart = bars.length > 0
+            && timestampToDateStr(bars[0].timestamp) <= searchStore.startDate
+          callback(bars, { forward: bars.length > 0 && !reachedUserStart, backward: false })
           return
         }
 
@@ -971,19 +519,31 @@ const initChart = () => {
             callback([], { forward: false, backward: false })
             return
           }
-          if (leftDate >= searchStore.startDate) {
-            callback([], { forward: false, backward: false })
-            return
-          }
+          // 已到达用户设定起点（或更早）→ 停止加载旧数据
+          
+          
           const endDatePrev = addDays(leftDate, -1)
           if (!endDatePrev) {
             callback([], { forward: false, backward: false })
             return
           }
-          const startDatePrev = addDays(endDatePrev, -DEFAULT_PAGE_SIZE + 1)
-          const bars = await fetchHistoryData(symbol, period, startDatePrev, endDatePrev)
-          const hasMoreOld = bars.length > 0
-          callback(bars, { forward: hasMoreOld, backward: false })
+          const startDatePrev0 = addDays(endDatePrev, -windowDaysFor(period, DEFAULT_PAGE_SIZE)-10)
+
+          if (searchStore.startDate && leftDate <= searchStore.startDate) {
+            callback([], { forward: false, backward: false })
+            return
+          }
+          let startDatePrev = startDatePrev0
+          if (startDatePrev && searchStore.startDate && startDatePrev < searchStore.startDate) {
+            startDatePrev = searchStore.startDate
+          }
+
+
+          const bars = await fetchHistoryData(symbol, period, startDatePrev, endDatePrev, DEFAULT_PAGE_SIZE)
+          // 返回为空 = 数据源边界（无更旧数据）；触达用户起点后也不再翻页
+          const reachedUserStart = bars.length > 0
+            && timestampToDateStr(bars[0].timestamp) <= searchStore.startDate
+          callback(bars, { forward: bars.length > 0 && !reachedUserStart, backward: false })
           return
         }
 
@@ -1018,7 +578,7 @@ const initChart = () => {
         }
       }
       poll()
-      pollTimer = setInterval(poll, 5000)
+      pollTimer = setInterval(poll, 2000)
     },
 
     unsubscribeBar() {
@@ -1028,8 +588,28 @@ const initChart = () => {
       }
     }
   })
+
   chart.value.subscribeAction('onCrosshairChange', crosshairHandler)
-  window.addEventListener('resize', () => chart.value?.resize())
+
+  // 重放已启用指标：K线对象重建（切换标的/重新加载）后恢复用户勾选的指标，
+  // 修复"显示已启用的指标未在K线对象变更后重新启用"
+  searchStore.enabledIndicators.forEach(({ name, calcParams, onMainChart }) => {
+    try {
+      const paneId = onMainChart ? 'candle_pane' : `${name}_pane`
+      const pane = chart.value.createIndicator({ name, calcParams }, onMainChart, { id: paneId })
+      if (!pane) console.warn(`重建指标失败(同名已存在?): ${name}`)
+    } catch (e) {
+      console.error(`重建指标失败: ${name}`, e)
+    }
+  })
+
+  // 云指标数据到达后强制刷新
+  setCloudMetricsChartGetter(() => chart.value)
+}
+
+// 窗口缩放监听（具名函数，便于卸载时移除）
+function handleResize() {
+  chart.value?.resize()
 }
 
 const reloadKLineData = () => {
@@ -1037,60 +617,122 @@ const reloadKLineData = () => {
   initChart()
 }
 
-
 // ==================== 生命周期 ====================
 onMounted(() => {
   initChart()
   searchStore.addOnLoadEvent('klineReload', reloadKLineData)
-  chartEle.value.addEventListener('mouseleave', () => {
-    tooltipVisible.value = false
-  })
-  console.log(getSupportedFigures())
-
- 
-  
+  chartEle.value.addEventListener('mouseleave', hideTooltip)
+  window.addEventListener('resize', handleResize)
 })
+
+function hideTooltip() {
+  tooltipVisible.value = false
+}
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
   searchStore.removeOnLoadEvent('klineReload')
-  window.removeEventListener('resize', () => chart.value?.resize())
-  chartEle.value.removeEventListener('mouseleave', () => {
-    tooltipVisible.value = false
-  })
+  window.removeEventListener('resize', handleResize)
+  chartEle.value?.removeEventListener('mouseleave', hideTooltip)
   disableCrosshair()
+  destroyCloudMetrics()
   dispose('chart')
 })
 
-// 暴露方法供父组件调用
-defineExpose({ addMarkers, clearAllMarkers, chart })
+// 暴露方法供父组件/抽屉面板调用
+// addMarkers / clearAllMarkers 包装后同时记录明细，供“导入图表信号”使用
+const markerRecords = ref([])
+
+const wrappedAddMarkers = (chartInstance, configs, market = 'stock') => {
+  addMarkers(chartInstance, configs, market)
+  ;(configs || []).forEach(c => {
+    markerRecords.value.push({ ...c, market })
+  })
+}
+
+const wrappedClearMarkers = (chartInstance) => {
+  clearAllMarkers(chartInstance)
+  markerRecords.value = []
+}
+
+const getMarkerRecords = () => markerRecords.value
+
+defineExpose({ addMarkers: wrappedAddMarkers, clearAllMarkers: wrappedClearMarkers, getMarkers: getMarkerRecords, chart })
 </script>
 
 <style scoped>
+.chart-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 .chart {
   width: 100%;
   height: 100%;
 }
 
+/* 周期切换工具条（悬浮于图表顶部中央，深色风格与整体 UI 一致） */
+.period-toolbar {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(15, 20, 30, 0.85);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.period-btn {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+.period-btn:hover {
+  color: #fff;
+  background: rgba(59, 130, 246, 0.15);
+}
+.period-btn:active {
+  transform: scale(0.95);
+}
+.period-btn.active {
+  color: #fff;
+  background: rgba(59, 130, 246, 0.30);
+  font-weight: 600;
+}
+
 .unified-tooltip {
   position: fixed;
-  background: rgba(20, 22, 28, 0.92);
+  background: rgba(15, 20, 30, 0.94);
   backdrop-filter: blur(6px);
-  color: #e0e0e0;
+  color: #e2e8f0;
   padding: 10px 14px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 13px;
   line-height: 1.7;
   pointer-events: none;
   z-index: 9999;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 8px 20px rgba(0,0,0,0.4);
-  min-width: 140px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  min-width: 150px;
 }
 .tooltip-header {
   font-size: 11px;
-  color: #aaa;
-  border-bottom: 1px solid rgba(255,255,255,0.1);
+  color: #94a3b8;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
   padding-bottom: 6px;
   margin-bottom: 6px;
 }
@@ -1109,17 +751,17 @@ defineExpose({ addMarkers, clearAllMarkers, chart })
 }
 .up { color: #ef4444; }
 .down { color: #22c55e; }
-.high-low { color: #e0e0e0; }
-.volume { color: #9aa0a6; }
+.high-low { color: #e2e8f0; }
+.volume { color: #94a3b8; }
 
 .tooltip-divider {
   height: 1px;
-  background: rgba(255,255,255,0.1);
+  background: rgba(148, 163, 184, 0.15);
   margin: 8px 0;
 }
 .tooltip-signal {
   font-size: 12px;
-  color: #ffd54f;
+  color: #fbbf24;
   line-height: 1.5;
 }
 </style>

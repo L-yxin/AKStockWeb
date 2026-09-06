@@ -6,12 +6,17 @@
 // biome-ignore lint: disable
 export {}
 declare global {
-  const DEFAULT_PARAMS: typeof import('./constants/indicatorDefaults.js').DEFAULT_PARAMS
+  const DEFAULT_PARAMS: typeof import('./config/indicatorDefaults.js').DEFAULT_PARAMS
   const EffectScope: typeof import('vue').EffectScope
   const ElMessage: typeof import('element-plus/es').ElMessage
+  const INITIAL_ENABLED_INDICATORS: typeof import('./config/indicatorDefaults.js').INITIAL_ENABLED_INDICATORS
+  const MAIN_CHART_INDICATORS: typeof import('./config/indicatorDefaults.js').MAIN_CHART_INDICATORS
+  const WS_cloudMetrics_url: typeof import('./api/index.js').WS_cloudMetrics_url
   const acceptHMRUpdate: typeof import('pinia').acceptHMRUpdate
+  const addMarkers: typeof import('./chart/markers.js').addMarkers
   const api: typeof import('./api/index.js').default
   const base_ws_url: typeof import('./api/index.js').base_ws_url
+  const clearAllMarkers: typeof import('./chart/markers.js').clearAllMarkers
   const computed: typeof import('vue').computed
   const createApp: typeof import('vue').createApp
   const createPinia: typeof import('pinia').createPinia
@@ -19,11 +24,14 @@ declare global {
   const defineAsyncComponent: typeof import('vue').defineAsyncComponent
   const defineComponent: typeof import('vue').defineComponent
   const defineStore: typeof import('pinia').defineStore
+  const destroyCloudMetrics: typeof import('./chart/indicators/cloudMetrics.js').destroyCloudMetrics
   const effectScope: typeof import('vue').effectScope
   const getActivePinia: typeof import('pinia').getActivePinia
+  const getBaseDirection: typeof import('./chart/markers.js').getBaseDirection
   const getCurrentInstance: typeof import('vue').getCurrentInstance
   const getCurrentScope: typeof import('vue').getCurrentScope
   const getCurrentWatcher: typeof import('vue').getCurrentWatcher
+  const getMarkers: typeof import('./chart/markers.js').getMarkers
   const h: typeof import('vue').h
   const inject: typeof import('vue').inject
   const isProxy: typeof import('vue').isProxy
@@ -37,6 +45,7 @@ declare global {
   const mapStores: typeof import('pinia').mapStores
   const mapWritableState: typeof import('pinia').mapWritableState
   const markRaw: typeof import('vue').markRaw
+  const mesMap: typeof import('./chart/markers.js').mesMap
   const nextTick: typeof import('vue').nextTick
   const onActivated: typeof import('vue').onActivated
   const onBeforeMount: typeof import('vue').onBeforeMount
@@ -61,6 +70,7 @@ declare global {
   const resolveComponent: typeof import('vue').resolveComponent
   const router: typeof import('./router/index.js').default
   const setActivePinia: typeof import('pinia').setActivePinia
+  const setCloudMetricsChartGetter: typeof import('./chart/indicators/cloudMetrics.js').setCloudMetricsChartGetter
   const setMapStoreSuffix: typeof import('pinia').setMapStoreSuffix
   const shallowReactive: typeof import('vue').shallowReactive
   const shallowReadonly: typeof import('vue').shallowReadonly
@@ -98,6 +108,7 @@ declare global {
   const ws_getLongShortSignal_url: typeof import('./api/index.js').ws_getLongShortSignal_url
   const ws_getTradingSignals_url: typeof import('./api/index.js').ws_getTradingSignals_url
   const ws_kline_url: typeof import('./api/index.js').ws_kline_url
+  const ws_signalQualityEvaluate_url: typeof import('./api/index.js').ws_signalQualityEvaluate_url
   const ws_syncData_url: typeof import('./api/index.js').ws_syncData_url
 }
 // for type re-export

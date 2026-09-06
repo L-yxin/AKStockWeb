@@ -4,9 +4,30 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
   const symbol = ref('sh000001') // 默认标的：上证指数
   let today = new Date()
   today.setFullYear(today.getFullYear() - 7) // 默认开始日期：6年前
-  const startDate = ref(today.toISOString().split('T')[0])
-  const endDate = ref(new Date().toISOString().split('T')[0])
+  const startDate = ref(today.toISOString())
+  const endDate = ref(new Date().toISOString())
   const adjust_type = ref("none") // none不复权、front前复权、back后复权
+  // K线周期（klinecharts Period 结构：{type, span}，type ∈ minute/hour/day/week/month）
+  const period = ref({ type: 'day', span: 1 })
+  const setPeriod = (p) => {
+    if (p && typeof p.type === 'string' && p.span > 0) {
+      period.value = { type: p.type, span: p.span }
+    }
+  }
+
+  // 已启用的K线技术指标（K线对象重建后由 kLineView 据此重放 createIndicator）
+  // 每项：{ name, calcParams, onMainChart }
+  const enabledIndicators = ref([
+    { name: 'MA', calcParams: [5, 10, 20, 60], onMainChart: true },
+    { name: 'VOL', calcParams: [5, 10, 20], onMainChart: false },
+  ])
+  const setEnabledIndicators = (list) => {
+    enabledIndicators.value = (Array.isArray(list) ? list : []).map(it => ({
+      name: it.name,
+      calcParams: Array.isArray(it.calcParams) ? [...it.calcParams] : [],
+      onMainChart: !!it.onMainChart,
+    }))
+  }
 
   // 2. 事件容器
   const onLoadEvent = ref(new Map())
@@ -68,6 +89,10 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
     startDate,
     endDate,
     adjust_type,
+    period,
+    setPeriod,
+    enabledIndicators,
+    setEnabledIndicators,
     addOnLoadEvent,
     removeOnLoadEvent,
     onLoad,
