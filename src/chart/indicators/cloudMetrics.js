@@ -29,6 +29,7 @@ const state = {
   chartGetter: null,   // 由图表组件注入：() => chart 实例
   metricName: 'cloudMetrics', // 云指标名称（对应上传时的 name，可通过 setCloudMetricName 切换）
   activeColumn: null,  // 当前展示的列名（取返回数据的第一列）
+  calcParams: [0]     // 计算参数（可通过 setCloudMetricName 切换）
 }
 const randomColor = () => {
   const hue = Math.floor(Math.random() * 360);
@@ -52,7 +53,15 @@ const template = {
   ],
   calc: (dataList, indicator) => {
     // 若已有缓存数据，直接按时间戳对齐返回
-    if (state.data.length > 0) {
+    if(state.calcParams[0] !== indicator.calcParams[0]) {
+      state.data = []
+      state.activeColumn = null
+      state.loading = true
+      state.calcParams[0] = indicator.calcParams[0]
+      fetchCloudMetrics(indicator.calcParams[0])
+      return dataList.map(() => ({ value: null }))
+    }
+    else if (state.data.length > 0) {
       // 构建索引映射
       const res = {};
       state.data.forEach(item => {
@@ -68,7 +77,7 @@ const template = {
         let color = randomColor();
         return {
         key: col,
-        title: `${col}: `,
+        title: `${state.metricName}-${col}: `,
         type: 'line',
         styles: () => ({ color: color, size: 1 })
       }});
