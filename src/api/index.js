@@ -19,8 +19,6 @@ const ws_getLongShortSignal_url = `${base_ws_url}/getLongShortSignal`
 // —— 交易订单信号（pybroker） ——
 const ws_getTradingSignals_url = `${base_ws_url}/getTradingSignals`
 
-// —— 云指标 ——
-const WS_cloudMetrics_url = `${base_ws_url}/cloudMetrics`
 
 // —— 指标信号质量评测（提交买卖价格/时间，由后台 akquant 分析） ——
 const ws_signalQualityEvaluate_url = `${base_ws_url}/signalQualityEvaluate`
@@ -84,7 +82,6 @@ export {
   ws_buyingAndSellingIndicator_url,
   ws_getLongShortSignal_url,
   ws_getTradingSignals_url,
-  WS_cloudMetrics_url,
   ws_signalQualityEvaluate_url,
   ws_simulationEvaluate_url,
   // 云指标上传 REST
