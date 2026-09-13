@@ -256,6 +256,11 @@ const enableSelectedLongShortIndicators = () => {
       t: new Date().getTime()
     }))
     ws.onmessage = (event) => {
+      let res = JSON.parse(event.data)
+      if (res.error){
+        reject(res.error)
+        return
+      }
       ElMessage.success("多空指标启用成功")
       resolve(event.data)
       ws.close()
@@ -319,7 +324,7 @@ const enableSelectedLongShortIndicators = () => {
       component.addMarkers(chart, [{ timestamp, type, value, mes: signal.message }], "predict")
     }
     searchStore.setLongShortSignals(signalsWithTs)
-  }).catch(err => console.error('启用多空指标失败:', err))
+  }).catch(err => {console.error('启用多空指标失败:', err); ElMessage.error('启用多空指标失败: ' + err)})
 }
 
 onMounted(() => {
