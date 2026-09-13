@@ -6,7 +6,7 @@
 //   adjust / adjust_type 复权类型：none | front | back
 //   start / startDate    起始时间：YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss
 //   end / endDate        结束时间：同上
-//   indicators           K线技术指标：名称:参数 用 | 分隔，如 MA:5,10,20,60|VOL:5,10,20
+//   indicators           K线技术指标：名称:参数[:主图bool] 用 | 分隔，如 MA:5,10,20,60|VOL:5,10,20|RSI:14:1
 //                        参数只能是数字 + 英文逗号（整数/小数均可）；
 //                        只写名称不带参数时使用默认参数（indicatorDefaults）。
 //   ls                   买卖提示指标：名称:参数 用 | 分隔。
@@ -38,6 +38,14 @@ import { refreshCloudMetrics } from '@/chart/indicators/cloudMetrics'
 
 const truthy = (v) => v === '1' || v === 'true' || v === 'yes' || v === 'on'
 
+/** 三态布尔解析：true 系/false 系 → 布尔；非法 → null */
+const parseBool3 = (v) => {
+  const s = String(v).trim().toLowerCase()
+  if (s === '1' || s === 'true' || s === 'yes' || s === 'on') return true
+  if (s === '0' || s === 'false' || s === 'no' || s === 'off') return false
+  return null
+}
+
 // ---------- 通用解析 ----------
 
 /** 日期字符串统一为 YYYY-MM-DD HH:mm:ss（与顶部选择器格式一致），非法返回 null */
@@ -52,14 +60,16 @@ function normalizeDateStr(s) {
 /** 参数串必须为「数字,数字,…」格式（整数/小数 + 英文逗号），否则不合格 */
 const PARAMS_RE = /^[\d.]+(,[\d.]+)*$/
 
-/** 解析 K线技术指标：'MA:5,10,20,60|VOL:5,10,20' → [{name, calcParams, onMainChart}] */
+/** 解析 K线技术指标：'MA:5,10,20,60|VOL:5,10,20' → [{name, calcParams, onMainChart}]
+ *  支持第三段 bool 显式指定是否主图：'MA:5,10:1'（主图）/ 'RSI:14:0'（副图）/ 'MA::1'（无参数+主图）
+ *  未提供第三段时按内置主图指标列表（MA/EMA/BOLL）判定 */
 function parseIndicators(raw) {
   if (!raw) return null
   const list = []
   for (const seg of raw.split('|')) {
     const s = seg.trim()
     if (!s) continue
-    const [namePart, paramsPart] = s.split(':')
+    const [namePart, paramsPart, mainPart] = s.split(':')
     const name = namePart.trim()
     if (!name) continue
     let calcParams = []
@@ -77,7 +87,18 @@ function parseIndicators(raw) {
       console.warn(`[URL] 技术指标 ${name} 未提供参数且无默认参数，已跳过`)
       continue
     }
-    list.push({ name, calcParams, onMainChart: MAIN_CHART_INDICATORS.includes(name) })
+    // 第三段 bool：是否主图
+    let onMainChart
+    if (mainPart !== undefined && mainPart.trim() !== '') {
+      onMainChart = parseBool3(mainPart)
+      if (onMainChart === null) {
+        console.warn(`[URL] 技术指标 ${name} 主图选项不合法（1/0/true/false/yes/no/on/off）: ${mainPart}`)
+        continue
+      }
+    } else {
+      onMainChart = MAIN_CHART_INDICATORS.includes(name)
+    }
+    list.push({ name, calcParams, onMainChart })
   }
   return list.length ? list : null
 }

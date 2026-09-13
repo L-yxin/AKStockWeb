@@ -54,7 +54,7 @@ npm run preview
 | `adjust` | `adjust_type` | 复权：`none`/`front`/`back` | `adjust=front` |
 | `start` | `startDate` | 起始时间（`YYYY-MM-DD` 或 `YYYY-MM-DD HH:mm:ss`） | `start=2024-01-01` |
 | `end` | `endDate` | 结束时间（同上） | `end=2026-09-06` |
-| `indicators` | — | K线技术指标，多个用 `\|` 分隔，格式 `名称:参数`；参数只能是**数字 + 英文逗号**；只写名称不带参数时使用默认参数 | `indicators=MA:5,10,20,60\|VOL:5,10,20\|RSI:14` |
+| `indicators` | — | K线技术指标，多个用 `\|` 分隔，格式 `名称:参数[:主图bool]`；参数只能是**数字 + 英文逗号**；只写名称不带参数时使用默认参数；**第三段 bool**（`1/0/true/false/yes/no/on/off`）显式指定是否叠加在主图（`MA:5,10:1` 主图、`RSI:14:0` 副图、`MA::1` 无参数+主图），省略时按内置主图列表（MA/EMA/BOLL）判定 | `indicators=MA:5,10,20,60\|VOL:5,10,20\|RSI:14:0` |
 | `ls` | — | 买卖提示指标，多个用 `\|` 分隔；名称按 method 或 info 匹配后台目录；参数**校验后才提交**。两种写法：**位置式** `名称:数字,数字`（按序填 int/float）；**命名式** `名称:参数名=值;参数名=值`（复合 Config 类型直接传值，见下） | `ls=is_volume_price_sync:5,8\|均线金叉:ma_pairs=5,10,10,20` |
 | `trades` | — | `1`/`true` → 加载 pybroker 订单 | `trades=1` |
 | `cloud` | — | `1`/`true` → 仅刷新云指标（列表 + K线叠加缓存），不打开面板 | `cloud=1` |
