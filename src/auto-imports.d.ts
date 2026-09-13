@@ -17,6 +17,7 @@ declare global {
   const acceptHMRUpdate: typeof import('pinia').acceptHMRUpdate
   const addMarkers: typeof import('./chart/markers.js').addMarkers
   const api: typeof import('./api/index.js').default
+  const applyUrlParams: typeof import('./urlParams.js').applyUrlParams
   const base_http_url: typeof import('./api/index.js').base_http_url
   const base_ws_url: typeof import('./api/index.js').base_ws_url
   const clearAllMarkers: typeof import('./chart/markers.js').clearAllMarkers
@@ -73,6 +74,7 @@ declare global {
   const reactive: typeof import('vue').reactive
   const readonly: typeof import('vue').readonly
   const ref: typeof import('vue').ref
+  const refreshCloudMetrics: typeof import('./chart/indicators/cloudMetrics.js').refreshCloudMetrics
   const resolveComponent: typeof import('vue').resolveComponent
   const router: typeof import('./router/index.js').default
   const setActivePinia: typeof import('pinia').setActivePinia

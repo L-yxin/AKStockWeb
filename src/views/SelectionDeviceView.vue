@@ -51,6 +51,14 @@ const symbolLoading = ref(false)
 
 const dateRange = ref([searchStore.startDate, searchStore.endDate])
 
+// URL 参数处理：searchStore 起止时间被 URL 修改后同步日期选择器显示（仅新增，不影响既有逻辑）
+watch(
+  () => [searchStore.startDate, searchStore.endDate],
+  ([s, e]) => {
+    if (s && e) dateRange.value = [s, e]
+  }
+)
+
 // 拉取所有标的列表
 const fetchAllSymbols = (query) => {
   symbolLoading.value = true

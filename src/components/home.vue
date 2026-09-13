@@ -68,6 +68,8 @@
 import { TrendCharts, Bell, Download, DataAnalysis, Coin, Upload } from '@element-plus/icons-vue'
 import { ws_getTradingSignals_url } from '@/api'
 import { INITIAL_ENABLED_INDICATORS } from '@/config/indicatorDefaults'
+// URL 参数处理（code/adjust/start/end/indicators/ls/trades/cloud）
+import { applyUrlParams } from '@/urlParams'
 
 const searchStore = useSearchParametersStore()
 
@@ -172,6 +174,15 @@ const loadGetTradingSignals = () => {
     ElMessage.error('加载 pybroker 订单失败，请确认后台已启动')
   }
 }
+
+// ---------- URL 参数处理 ----------
+// 解析地址栏参数并应用（无参数时不动作）；子组件 kLineView 先挂载，chart 已就绪
+onMounted(() => {
+  applyUrlParams({
+    getChartInstance: () => klineRef.value,
+    loadTradingSignals: loadGetTradingSignals,
+  })
+})
 </script>
 
 <style scoped>

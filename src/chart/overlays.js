@@ -11,29 +11,21 @@ registerOverlay({
   lock: true,
   totalStep: 1,
   createPointFigures: function (param) {
-    const { overlay, coordinates } = param
+    const { overlay, coordinates, chart } = param
+
     const point = overlay.points[0]
+    let kline = null
+  if (chart && point.timestamp != null) {
+    const dataList = chart.getDataList()                       
+    const idx = dataList.findIndex(d => d.timestamp === point.timestamp)
+    if (idx !== -1) kline = dataList[idx]
+  }
+
     const market = point.market
     const type = overlay.extendData
-    const offsetIndex = point.offsetIndex || 0
-    const total = point.totalInGroup || 1
-    const direction = point.direction || 2.5
-
-    const centerX = coordinates[0].x
-    const baseY = coordinates[0].y
-
-    const offsetStep = 27
-    const groupOffset = (offsetIndex - (total - 1) / 2) * offsetStep
-
-    const baseStartDistance = 70
-    const baseEndDistance = 10
-    const extraOffset = 55 // 额外移动的距离
-    const startDistance = baseStartDistance + extraOffset
-    const endDistance = baseEndDistance + extraOffset
-
-    const lineEndY = baseY + direction * endDistance
-    const lineStartY = baseY + direction * startDistance + groupOffset
-
+    const direction = point.direction || 1
+    const basePrice = kline ? direction===1 ? kline.low : kline.high : point.value
+  
     const getColor = (market, type) => {
       if (market === 'stock') {
         if (type === 'B' || type === '买') return '#ef5350'
@@ -59,8 +51,8 @@ registerOverlay({
         type: 'line',
         attrs: {
           coordinates: [
-            { x: centerX, y: lineStartY },
-            { x: centerX, y: lineEndY }
+            chart.convertToPixel({ timestamp: point.timestamp, value: basePrice+(-direction * 0.01 * basePrice) }),
+            chart.convertToPixel({ timestamp: point.timestamp, value: basePrice+(-direction * 0.05 * basePrice) })
           ]
         },
         styles: {
@@ -74,8 +66,8 @@ registerOverlay({
         key: 'text',
         type: 'text',
         attrs: {
-          x: centerX,
-          y: lineStartY - direction * 6,
+          x: chart.convertToPixel({ timestamp: point.timestamp, value: basePrice+(-direction * 0.05 * basePrice) }).x,
+          y: chart.convertToPixel({ timestamp: point.timestamp, value: basePrice+(-direction * 0.05 * basePrice) }).y,
           text: overlay.extendData || '',
           align: 'center',
           baseline: 'middle'

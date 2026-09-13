@@ -194,3 +194,12 @@ async function fetchCloudMetrics(CloudMetricName) {
     state.loading = false
   }
 }
+
+// 仅刷新云指标数据（由 URL 参数 cloud=true 触发；清除缓存后重新拉取并强制重算）。
+// 纯新增导出，不影响原有逻辑。
+export function refreshCloudMetrics() {
+  state.data = []
+  state.activeColumn = null
+  state.loading = false
+  fetchCloudMetrics(state.metricName)
+}

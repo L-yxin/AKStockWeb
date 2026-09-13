@@ -44,6 +44,50 @@ npm run preview
 
 ---
 
+## URL 参数（分享/深链）
+
+支持通过地址栏 URL 参数一键设置平台状态，页面加载时自动应用，无需手动操作。
+
+| 参数 | 别名 | 说明 | 示例 |
+|---|---|---|---|
+| `code` | `symbol` | 标的代码 | `code=sh600000` |
+| `adjust` | `adjust_type` | 复权：`none`/`front`/`back` | `adjust=front` |
+| `start` | `startDate` | 起始时间（`YYYY-MM-DD` 或 `YYYY-MM-DD HH:mm:ss`） | `start=2024-01-01` |
+| `end` | `endDate` | 结束时间（同上） | `end=2026-09-06` |
+| `indicators` | — | K线技术指标，多个用 `\|` 分隔，格式 `名称:参数`；参数只能是**数字 + 英文逗号**；只写名称不带参数时使用默认参数 | `indicators=MA:5,10,20,60\|VOL:5,10,20\|RSI:14` |
+| `ls` | — | 买卖提示指标，多个用 `\|` 分隔；名称按 method 或 info 匹配后台目录；参数**校验后才提交**。两种写法：**位置式** `名称:数字,数字`（按序填 int/float）；**命名式** `名称:参数名=值;参数名=值`（复合 Config 类型直接传值，见下） | `ls=is_volume_price_sync:5,8\|均线金叉:ma_pairs=5,10,10,20` |
+| `trades` | — | `1`/`true` → 加载 pybroker 订单 | `trades=1` |
+| `cloud` | — | `1`/`true` → 仅刷新云指标（列表 + K线叠加缓存），不打开面板 | `cloud=1` |
+
+**复合 Config 类型（命名式写法）**：后端 pydantic Config 类均支持字符串/列表输入，URL 上直接传值：
+
+| Config 参数 | 后端类型 | URL 传值 | 示例 |
+|---|---|---|---|
+| `macdconfig` | `MacdConfig`（3 整数） | `fast,slow,signal` | `macdconfig=12,16,8` |
+| `ma_periods` | `MaPeriodsConfig`（整数列表） | 逗号分隔整数 | `ma_periods=5,10,20,30` |
+| `rsi_periods` | `RsiConfig`（整数列表） | 逗号分隔整数 | `rsi_periods=6,12,24,48` |
+| `ma_pairs` | `MaPairsConfig`（二元组列表） | **扁平数字两两成对** `s1,l1,s2,l2` | `ma_pairs=5,10,10,20` |
+
+注意：`ma_pairs` 刻意用扁平数字两两成对（`5,10,10,20` → `[[5,10],[10,20]]`），避开 `;` 分隔符与指标段分隔冲突；`;` 用于**同一指标内多个命名参数**的分隔，`\|` 用于**多个指标**的分隔。
+
+**完整示例**：
+
+```
+http://localhost:5173/?code=sh600000&adjust=front&start=2024-01-01&end=2026-09-06&indicators=MA:5,10,20,60|VOL:5,10,20|RSI:14&ls=MACD金叉:macdconfig=12,16,8;onTheZeroAxis=1|均线向上:ma_periods=5,10,20,30;threshold=0.05|RSI超卖:rsi_periods=6,12,24,48;threshold=25&trades=1&cloud=1
+```
+
+**校验规则**：
+- `indicators`：参数格式不符（非数字/非英文逗号）的指标跳过并告警；无参数时用 `indicatorDefaults.DEFAULT_PARAMS` 默认值
+- `ls`（买卖提示）：指标名在后台目录中不存在 → 跳过；参数校验不合格（格式不符/值非法）→ 跳过并弹窗告警，并显示不合格原因（如 `参数macdconfig=12,16不合格`）；通过校验的指标按 URL 参数 + 目录默认值提交 `/ws/getLongShortSignal`，信号标记到 K线并存入 `searchStore.longShortSignals`
+  - **位置式**：仅 int/float 类型参数接收 URL 数字，`*Config` 复杂类型与 bool 参数保持默认值；数字个数超过该指标可接收数量 → 跳过
+  - **命名式**：按参数名匹配目录 `params` 注解（annotation）逐项校验转换——`MacdConfig`（恰 3 整数）、`MaPeriodsConfig`/`RsiConfig`（逗号整数列表）、`MaPairsConfig`（偶数个扁平整数）、int/float/bool 严格正则；其他 `*Config` 类型仅允许 `[\d.,;]` 原样透传；**先全填默认值，再覆盖命名参数**，避免遗漏参数
+- 时间参数自动统一为 `YYYY-MM-DD HH:mm:ss` 写入 store；**URL 未提供 start/end 时，store 默认 ISO 值（toISOString）同样被规范化为该格式**（K线分页 `addDays` 只认 `YYYY-MM-DD HH:mm:ss`，否则 K线空白）；提交多空信号时自动转 ISO（后端 `/ws/getLongShortSignal` 要求 `%Y-%m-%dT%H:%M:%S.%fZ`）
+- URL 无任何参数时不做任何动作；搜索类参数（code/adjust/start/end/indicators）变化自动触发一次数据加载（延迟 500ms，避开页面加载早期组件初始化竞态）
+
+实现：`src/urlParams.js`（`applyUrlParams`，由 `home.vue` 挂载时调用）。
+
+---
+
 ## 项目结构
 
 ```
