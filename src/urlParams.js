@@ -478,9 +478,9 @@ export function applyUrlParams(ctx = {}) {
   }
 
   // 搜索参数有变化 → 触发加载（K线重载由 kLineView 注册的 onLoadEvent 执行）。
-  // 延迟 500ms：避免页面加载早期与组件初始化竞态（偶发 WS 失败导致图表空白）。
+  // 延迟 700ms：避免页面加载早期与组件初始化竞态（偶发 WS 失败导致图表空白）。
   if (changed) {
-    setTimeout(() => searchStore.onLoad(), 500)
+    setTimeout(() => searchStore.onLoad(), 700)
   }
 
   // 买卖提示（异步：先拉目录 → 校验参数 → 提交信号）
