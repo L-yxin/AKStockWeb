@@ -153,11 +153,6 @@ function forceRefresh() {
 async function fetchCloudMetrics(CloudMetricName) {
   // 设置定时刷新（仅首次调用时设置一次）
   const cloudMetricStore = useCloudMetricStore() // 确保 store 已初始化
-  if (!state.timer) {
-    state.timer = setInterval(() => {
-      fetchCloudMetrics(CloudMetricName)
-    }, REFRESH_INTERVAL)
-  }
 
   try {
     const searchStore = useSearchParametersStore()
