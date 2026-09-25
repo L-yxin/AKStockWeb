@@ -261,6 +261,26 @@ akstock/
   转为 `configs` 列表（`{datetime, value, type: B/S, mes}`）
 - 前端清除旧标记后，用 `addMarkers` 批量添加到 K线图
 
+### 8. Python 指标（`PythonIndicatorPanel.vue` + `pyInd.js`）
+
+> Indicator 目录的指标依赖 Python 生态（TALib / Numba / torch），浏览器无法直接计算；
+> 由后端 FastAPI 计算并返回 JS（`window.__pyInd`），前端动态注册为 klinecharts 指标。
+
+- 清单：`GET /api/pyInd/list` 返回 `{items, talib_funcs}`（19 个指标 + 158 个 talib 函数），
+  指标参数定义含 `data_param`（数据参数名）
+- 计算：`GET /api/pyInd/{name}.js?code=&period=&params=&data=&refresh=`，
+  后端内存缓存 5 分钟 / 20 条（LRU），`refresh=1` 强制重算
+- **数据参数规则**：`data_param` 为 ohlcv 列名（close/high/low/…）→ 仅基本数据选择；
+  非列名（arr/sequence/speed）→ **复合序列**（分步编辑器），标签为 `${参数名}数据`
+- **分步编辑器**：每步 `a/b/c… = 函数(参数)`，函数下拉分「Indicator 指标」「talib 函数」；
+  参数类型支持基本数据 / 引用前序变量 / 数字 / bool；步骤可删空（仅用基本数据）；
+  最终结果可选任意步骤变量
+- **复合序列表达式**：`;` 分隔分步流程提交给 `data` 参数，
+  如 `a=talib.MA(close,5); b=percent_change_nb(a); b`；
+  talib 多输出用 `[i]` 索引（如 `talib.MACD(close,12,26,9)[1]`）
+- 已应用列表展示 `数据: <表达式>` tag；K线对象变更后按 store 中表达式自动重放
+- 完整接口与语法详见 `docs/backend-api.md` 第 7 节
+
 ---
 
 ## 状态管理（Pinia）
@@ -275,6 +295,7 @@ akstock/
 | `period` | K线周期 `{type, span}`，type ∈ minute/hour/day/week/month |
 | `enabledIndicators` | 已启用技术指标 `[{name, calcParams, onMainChart}]` |
 | `longShortSignals` | 多空信号列表（买卖提示指标生成，供模拟交易使用） |
+| `pythonIndicators` | 已应用 Python 指标 `[{name, params, data, onMainChart}]`（含复合序列 data 表达式） |
 | `onLoadEvent` | 加载事件 Map，点击"加载数据"时依次执行 |
 | `validateParameters()` | 参数校验（标的非空/日期合法/结束≥开始/复权合法） |
 | `onLoad()` | 校验通过后执行所有加载事件 |

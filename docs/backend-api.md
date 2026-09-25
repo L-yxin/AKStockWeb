@@ -71,6 +71,8 @@
 | `ws://…/getTradingSignals`         | —  | pybroker 交易订单信号 | `src/components/home.vue`                           |
 | `ws://…/cloudMetrics`              | —  | 云指标数据           | `src/chart/indicators/cloudMetrics.js`              |
 | `ws://…/signalQualityEvaluate`     | —  | **信号质量评测（新增）**  | `src/components/panels/SignalQualityPanel.vue`      |
+| `GET /api/pyInd/list`               | REST | Python 指标清单 + talib 函数 | `src/components/panels/PythonIndicatorPanel.vue`    |
+| `GET /api/pyInd/{name}.js`          | REST | 计算 Python 指标（`data` 复合序列） | `src/chart/indicators/pyInd.js`                |
 
 
 
@@ -600,7 +602,104 @@
 
 ***
 
-## 7. 变更记录
+## 7. Python 指标（pyInd）REST API
+
+> **定位**：Indicator 目录的指标依赖 Python 生态（TALib / Numba / torch），浏览器无法直接计算。
+> 由后端 Python 计算后生成 JS（`window.__pyInd`），前端动态注册为 klinecharts 指标（主图 / 副图）。
+> 前端面板：`src/components/panels/PythonIndicatorPanel.vue`；图表接入：`src/chart/indicators/pyInd.js`。
+
+### 7.1 `GET /api/pyInd/list` —— 指标清单
+
+响应：
+
+```json
+{
+  "items": [
+    {"name": "mew_low_point", "data_param": "arr", "params": [
+        {"name": "max_backlook", "annotation": "int", "required": false, "default": 400}
+    ], "doc": "计算创新低 N 天"},
+    {"name": "bias_rate", "data_param": "close", "params": [
+        {"name": "p1", "annotation": "int", "required": true, "default": null}
+    ], "doc": "乖离率（BIAS）多均线计算"}
+  ],
+  "talib_funcs": ["ACOS", "AD", "ADD", "..."]
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `name` | 指标名（对应 `{name}.js`） |
+| `data_param` | 数据参数名。**ohlcv 列名**（close/high/low/open/volume/amount/oi）→ 仅基本数据选择；**非列名**（arr/sequence/speed 等）→ 复合序列（显示分步编辑器） |
+| `params[]` | 可配置参数（跳过数据参数）：name / annotation（int/float/bool）/ required / default |
+| `talib_funcs` | talib 全部函数名（约 158 个），供分步编辑器的函数下拉分组展示 |
+
+### 7.2 `GET /api/pyInd/{name}.js` —— 计算指标
+
+参数：
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `code` | 是 | 标的代码（`sh600000` / `600000.SH`） |
+| `period` | 否 | 周期，默认 `1d`（1m/5m/15m/30m/1h/1d/1w/1M） |
+| `adjust_type` | 否 | 复权 `none/front/back`，默认 `none` |
+| `params` | 否 | 指标参数，英文逗号分隔（跳过数据参数；不足补默认、超限报错） |
+| `data` | 否 | **复合序列数据表达式**（URL 编码，见 7.3）。空 → 后端按 `data_param` 默认列 |
+| `refresh` | 否 | `1` 强制重算（跳过 5min/20 条缓存），默认 `0` |
+| `start` / `end` | 否 | 起止日期 `YYYY-MM-DD` |
+
+响应（`application/javascript`，执行后读取 `window.__pyInd`）：
+
+```js
+window.__pyInd = {
+  "name": "mew_low_point",
+  "params": [400],
+  "data_expr": "a=talib.MA(close,5); b=percent_change_nb(a); b",
+  "symbol": "600000.SH",
+  "period": "1d",
+  "adjust_type": "none",
+  "generated": "2026-09-25 15:30:00",
+  "count": 1877,
+  "data": [
+    {"timestamp": 1546358400000, "value": null},
+    {"timestamp": 1546444800000, "value": 1.234567}
+  ]
+}
+```
+
+- `timestamp`：epoch 毫秒（Asia/Shanghai），与 K 线对象时间戳对齐；`value` NaN → `null`
+- `data_expr`：实际使用的数据表达式（`data` 或默认列名）
+- 错误：`400`/`500`，`detail` 为原因
+
+### 7.3 复合序列数据表达式（data 参数）语法
+
+前端分步编辑器把用户配置序列化为 `;` 分隔的分步表达式提交：
+
+```
+a=talib.MA(close,5); b=percent_change_nb(a); b        # 两步：均线 → 变化率，结果 b
+a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL 线（[i] 索引）
+```
+
+| 参数形式 | 说明 |
+|---|---|
+| 基本数据 | `close`/`high`/`low`/`open`/`volume`/`amount` 单词 |
+| 前序变量 | 引用前面步骤的结果（`a`/`b`/`c`…） |
+| 数字 / bool | 如 `5`、`true` |
+| 嵌套函数调用 | 任意深度，≤ 10 层 |
+
+- 函数仅限 `talib.*` 或 Indicator 目录指标
+- talib 多输出用 `[i]` 索引；无索引时默认取第一个输出
+- 前端标签规则：数据参数名非列名 → `{参数名}数据`（如 `arr数据`、`sequence数据`、`speed数据`）+ 复合序列分步编辑；列名 → `{参数名}数据` + 仅基本数据选择
+
+### 7.4 前端分步编辑器交互
+
+- 步骤每行 `a/b/c… = 函数(参数)`，函数下拉分「Indicator 指标」「talib 函数」两组
+- 参数行类型：基本数据 / 引用变量（仅前序步骤）/ 数字 / bool
+- 步骤可删空（仅用基本数据时 `data` 提交所选列名）；「最终结果」可选任意步骤变量
+- 已应用列表展示 `数据: <表达式>` tag；K 线对象变更后按 store 中的 data 表达式自动重放
+
+***
+
+## 8. 变更记录
 
 
 
@@ -609,3 +708,4 @@
 | 2026-09-05 | 新增 `signalQualityEvaluate` 端点规格；移除互联网同步端点（`ws_syncData`）说明；数据源统一为通达信 |
 | 2026-09-06 | 前端新增多周期切换（1/5/15/30分、60分、日/周/月K）；signalQualityEvaluate 结果卡片展示（报告 file:/// URL + 指标摘要）；评测基准周期固定日线；修复月线周期映射（1M）与信号时区匹配 |
 | 2026-09-06 | K线分页加载：`/ws/kline` 请求新增可选 `limit`（非空时后端只返回最近 N 根，升序）；K线时间戳统一按 Asia/Shanghai 序列化（不依赖后端进程时区）；前端 init/forward 均按 limit 分页，滚动可逐级加载更早数据直到数据源边界；K线技术指标启用状态提升至 store，切换标的/重新加载后自动重放 |
+| 2026-09-25 | 新增 Python 指标（pyInd）REST API：`/api/pyInd/list`（指标清单 + talib_funcs 158 个）、`/api/pyInd/{name}.js`（后端计算 + 内存缓存 5min/20 条）；`data` 复合序列表达式支持分步流程 / 多序列 / talib 多输出 `[i]` 索引；前端面板改为分步编辑器（基本数据 + 引用变量 + 数字/bool），数据参数名标签规则（arr/sequence/speed 等非列名 → 复合序列，ohlcv 列名 → 仅基本数据） |

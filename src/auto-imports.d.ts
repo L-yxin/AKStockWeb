@@ -7,6 +7,8 @@
 export {}
 declare global {
   const 
+  getPyIndicatorList: typeof import('./api/index.js')['
+  const 
   uploadCloudMetric: typeof import('./api/index.js')['
   const DEFAULT_PARAMS: typeof import('./config/indicatorDefaults.js').DEFAULT_PARAMS
   const EffectScope: typeof import('vue').EffectScope
@@ -17,6 +19,7 @@ declare global {
   const acceptHMRUpdate: typeof import('pinia').acceptHMRUpdate
   const addMarkers: typeof import('./chart/markers.js').addMarkers
   const api: typeof import('./api/index.js').default
+  const applyPyIndicator: typeof import('./chart/indicators/pyInd.js').applyPyIndicator
   const applyUrlParams: typeof import('./urlParams.js').applyUrlParams
   const base_http_url: typeof import('./api/index.js').base_http_url
   const base_ws_url: typeof import('./api/index.js').base_ws_url
@@ -31,6 +34,7 @@ declare global {
   const deleteCloudMetric: typeof import('./api/index.js').deleteCloudMetric
   const destroyCloudMetrics: typeof import('./chart/indicators/cloudMetrics.js').destroyCloudMetrics
   const effectScope: typeof import('vue').effectScope
+  const fetchPyIndicatorJs: typeof import('./api/index.js').fetchPyIndicatorJs
   const getActivePinia: typeof import('pinia').getActivePinia
   const getBaseDirection: typeof import('./chart/markers.js').getBaseDirection
   const getCloudMetric: typeof import('./api/index.js').getCloudMetric
@@ -75,6 +79,7 @@ declare global {
   const readonly: typeof import('vue').readonly
   const ref: typeof import('vue').ref
   const refreshCloudMetrics: typeof import('./chart/indicators/cloudMetrics.js').refreshCloudMetrics
+  const removePyIndicator: typeof import('./chart/indicators/pyInd.js').removePyIndicator
   const resolveComponent: typeof import('vue').resolveComponent
   const router: typeof import('./router/index.js').default
   const setActivePinia: typeof import('pinia').setActivePinia

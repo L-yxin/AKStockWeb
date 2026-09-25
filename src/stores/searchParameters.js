@@ -1,7 +1,7 @@
 
 export const useSearchParametersStore = defineStore('searchParameters', () => {
   // 1. 响应式状态
-  const symbol = ref('sh000001') // 默认标的：上证指数
+  const symbol = ref('999999.SH') // 默认标的：上证指数
   let today = new Date()
   today.setFullYear(today.getFullYear() - 7) // 默认开始日期：6年前
   const startDate = ref(today.toISOString())
@@ -25,6 +25,18 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
     enabledIndicators.value = (Array.isArray(list) ? list : []).map(it => ({
       name: it.name,
       calcParams: Array.isArray(it.calcParams) ? [...it.calcParams] : [],
+      onMainChart: !!it.onMainChart,
+    }))
+  }
+
+  // Python 指标（Indicator 目录，后端计算；K线对象重建后由 kLineView 重放拉取注册）
+  // 每项：{ name, params, onMainChart }
+  const pythonIndicators = ref([])
+  const setPythonIndicators = (list) => {
+    pythonIndicators.value = (Array.isArray(list) ? list : []).map(it => ({
+      name: it.name,
+      params: Array.isArray(it.params) ? [...it.params] : [],
+      data: it.data || '',
       onMainChart: !!it.onMainChart,
     }))
   }
@@ -100,6 +112,8 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
     setPeriod,
     enabledIndicators,
     setEnabledIndicators,
+    pythonIndicators,
+    setPythonIndicators,
     longShortSignals,
     setLongShortSignals,
     addOnLoadEvent,

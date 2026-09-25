@@ -74,6 +74,32 @@ async function deleteCloudMetric(name) {
   return resp.json()
 }
 
+// ============================================================
+// Python 指标（Indicator 目录，后端 FastAPI 计算 + 内存缓存）
+// ============================================================
+
+/** 列出 Python 指标（名称 / 参数定义 / 说明） */
+async function getPyIndicatorList() {
+  const resp = await fetch(`${base_http_url}/api/pyInd/list`)
+  if (!resp.ok) throw new Error(`Python指标清单获取失败 (${resp.status})`)
+  const j = await resp.json()
+  return { items: j.items || [], talibFuncs: j.talib_funcs || [] }
+}
+
+/** 计算 Python 指标并返回 JS 文本（window.__pyInd） */
+async function fetchPyIndicatorJs(name, paramsStr, { code, period, adjust, data = "", refresh = 0, start = "", end = "" }) {
+  const qs = new URLSearchParams({ code, period, adjust_type: adjust, params: paramsStr, refresh: String(refresh) })
+  if (data) qs.set("data", data)
+  if (start) qs.set("start", start)
+  if (end) qs.set("end", end)
+  const resp = await fetch(`${base_http_url}/api/pyInd/${encodeURIComponent(name)}.js?${qs.toString()}`)
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.detail || `Python指标计算失败 (${resp.status})`)
+  }
+  return resp.text()
+}
+
 export {
   base_ws_url,
   base_http_url,
@@ -89,4 +115,7 @@ export {
   listCloudMetrics,
   getCloudMetric,
   deleteCloudMetric,
+  // Python 指标 REST
+  getPyIndicatorList,
+  fetchPyIndicatorJs,
 }

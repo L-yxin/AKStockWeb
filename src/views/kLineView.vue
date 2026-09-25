@@ -67,6 +67,8 @@ import '@/chart/overlays'
 import { mesMap, addMarkers, clearAllMarkers } from '@/chart/markers'
 // 云指标生命周期
 import { setCloudMetricsChartGetter, destroyCloudMetrics } from '@/chart/indicators/cloudMetrics'
+// Python 指标（Indicator 目录，后端计算）重放
+import { applyPyIndicator } from '@/chart/indicators/pyInd'
 
 import { ws_kline_url } from '@/api'
 
@@ -743,6 +745,19 @@ const initChart = () => {
 
   // 云指标数据到达后强制刷新
   setCloudMetricsChartGetter(() => chart.value)
+
+  // Python 指标重放：K线对象重建后恢复用户已应用的 Python 指标
+  // （数据由后端计算，异步拉取 JS 后注册，失败不影响图表主体）
+  searchStore.pythonIndicators.forEach((it) => {
+    applyPyIndicator(chart.value, {
+      ...it,
+      code: searchStore.symbol,
+      period: periodToBackend(searchStore.period),
+      adjust: searchStore.adjust_type,
+    })
+      .then(id => { if (!id) console.warn(`Python指标重放失败(同名已存在?): ${it.name}`) })
+      .catch(e => console.error(`Python指标 ${it.name} 重放失败:`, e))
+  })
 
   // 模拟交易进行中：K线对象重建（切换标的/重新加载）后重放交易记录标记
   const simStore = useSimulationStore()

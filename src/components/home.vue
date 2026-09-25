@@ -37,6 +37,11 @@
           <el-icon><TrendCharts /></el-icon>
           <span>云指标</span>
         </div>
+        <div class="menu-sep" />
+        <div class="menu-item" @click="openDrawer('pythonIndicator')">
+          <el-icon><Cpu /></el-icon>
+          <span>Python指标</span>
+        </div>
         <div class="menubar-spacer" />
         <div class="menubar-status">数据源：通达信后台</div>
       </div>
@@ -61,11 +66,12 @@
     <long-short-indicator-panel v-else-if="activeMenu === 'buyingAndSellingIndicator'" :chart-ref="klineRef" />
     <signal-quality-panel v-else-if="activeMenu === 'signalQualityEvaluate'" :chart-ref="klineRef" />
     <cloud-metric-panel v-else-if="activeMenu === 'cloudMetricUpload'" />
+    <python-indicator-panel v-else-if="activeMenu === 'pythonIndicator'" :chart-ref="klineRef" />
   </el-drawer>
 </template>
 
 <script setup>
-import { TrendCharts, Bell, Download, DataAnalysis, Coin, Upload } from '@element-plus/icons-vue'
+import { TrendCharts, Bell, Download, DataAnalysis, Coin, Upload, Cpu } from '@element-plus/icons-vue'
 import { ws_getTradingSignals_url } from '@/api'
 import { INITIAL_ENABLED_INDICATORS } from '@/config/indicatorDefaults'
 // URL 参数处理（code/adjust/start/end/indicators/ls/trades/cloud）
@@ -105,6 +111,7 @@ const getCH = (key) => {
     signalQualityEvaluate: '信号质量评测',
     simulation: '模拟交易',
     cloudMetricUpload: '云指标',
+    pythonIndicator: 'Python指标',
   }
   return map[key] || key
 }
