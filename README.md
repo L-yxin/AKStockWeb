@@ -267,17 +267,20 @@ akstock/
 > 由后端 FastAPI 计算并返回 JS（`window.__pyInd`），前端动态注册为 klinecharts 指标。
 
 - 清单：`GET /api/pyInd/list` 返回 `{items, talib_funcs}`（19 个指标 + 158 个 talib 函数），
-  指标参数定义含 `data_param`（数据参数名）
+  指标定义含 `data_param`/`data_params`（数据参数）、`signature`（完整签名 data/fin/param 分类）、
+  `params`（可配置参数，int/float/bool/**str**）、`doc`（docstring 第一行）、`doc02`（完整 __doc__）
 - 计算：`GET /api/pyInd/{name}.js?code=&period=&params=&data=&refresh=`，
-  后端内存缓存 5 分钟 / 20 条（LRU），`refresh=1` 强制重算
-- **数据参数规则**：`data_param` 为 ohlcv 列名（close/high/low/…）→ 仅基本数据选择；
+  后端内存缓存 5 分钟 / 20 条（LRU），`refresh=1` 强制重算；
+  `data` 多数据参数（如 sr_width）传 JSON 对象 `{"参数名":"表达式",…}`
+- **数据参数规则**：`data_param` 为 ohlcv 列名（close/high/low/…）→ 仅基本数据选择（隐藏）；
   非列名（arr/sequence/speed）→ **复合序列**（分步编辑器），标签为 `${参数名}数据`
-- **分步编辑器**：每步 `a/b/c… = 函数(参数)`，函数下拉分「Indicator 指标」「talib 函数」；
-  参数类型支持基本数据 / 引用前序变量 / 数字 / bool；步骤可删空（仅用基本数据）；
-  最终结果可选任意步骤变量
+- **分步编辑器**：每步「第 N 步 = 函数(参数)」，函数下拉分「Indicator 指标」「talib 函数」；
+  选 Indicator 函数按签名**自动预填参数**（数据列/默认值/0-1/字符串）；数据参数值下拉合并
+  基本数据列 + 前序步骤（**跨编辑区引用**）；变量命名跨编辑区全局连续（a/b/c…d/e/f…）；
+  参数类型支持基本数据 / 引用变量 / 数字 / bool / **字符串**
 - **复合序列表达式**：`;` 分隔分步流程提交给 `data` 参数，
-  如 `a=talib.MA(close,5); b=percent_change_nb(a); b`；
-  talib 多输出用 `[i]` 索引（如 `talib.MACD(close,12,26,9)[1]`）
+  如 `a=talib.MA(close,5); b=percent_change_nb(a); b`；多数据参数共享变量环境（后序可引用前序编辑区变量）；
+  talib 多输出用 `[i]` 索引（如 `talib.MACD(close,12,26,9)[1]`）；支持字符串字面量 `'classic'`
 - 已应用列表展示 `数据: <表达式>` tag；K线对象变更后按 store 中表达式自动重放
 - 完整接口与语法详见 `docs/backend-api.md` 第 7 节
 

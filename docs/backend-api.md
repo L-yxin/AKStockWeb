@@ -630,7 +630,10 @@
 |---|---|
 | `name` | 指标名（对应 `{name}.js`） |
 | `data_param` | 数据参数名。**ohlcv 列名**（close/high/low/open/volume/amount/oi）→ 仅基本数据选择；**非列名**（arr/sequence/speed 等）→ 复合序列（显示分步编辑器） |
-| `params[]` | 可配置参数（跳过数据参数）：name / annotation（int/float/bool/ndarray）/ required / default。**annotation 为 `ndarray` 的参数前端忽略（不渲染输入框、不提交）**，后端按参数名自动注入：FN 编号（FN1/FN2…）→ 财务数据（TTM 化）；K 线列名（low/high…）→ K 线对应列（如 t_sr_position 的 low/high） |
+| `data_params` | 全部数据参数名（如 sr_width 的 `[relative_low, relative_high]`）；列名参数前端隐藏（后端默认取该列） |
+| `signature` | 完整签名（保持参数顺序），每项 `{name, annotation, kind, required, default}`；`kind` ∈ `data`/`fin`（财务 FN，自动注入，前端忽略）/`param`（表单参数） |
+| `params[]` | 可配置参数（kind=param）：name / annotation（int/float/bool/**str**/ndarray）/ required / default。**str 参数**（如 t_pivot_r 的 `style`）文本输入、原样提交；`ndarray` 参数前端忽略（不渲染输入框、不提交），后端按参数名自动注入：FN 编号（FN1/FN2…）→ 财务数据（TTM 化）；K 线列名（low/high…）→ K 线对应列（如 t_sr_position 的 low/high） |
+| `doc` | docstring 第一行（下拉展示）；`doc02` 完整 docstring（"详细文档"只读框） |
 | `talib_funcs` | talib 全部函数名（约 158 个），供分步编辑器的函数下拉分组展示 |
 
 > **财务字段（pe / pe_ratio_to_ma）**：数据参数后的 `ndarray` 参数为通达信专业财务字段
@@ -649,7 +652,7 @@
 | `code` | 是 | 标的代码（`sh600000` / `600000.SH`） |
 | `period` | 否 | 周期，默认 `1d`（1m/5m/15m/30m/1h/1d/1w/1M） |
 | `adjust_type` | 否 | 复权 `none/front/back`，默认 `none` |
-| `params` | 否 | 指标参数，英文逗号分隔（跳过数据参数；不足补默认、超限报错） |
+| `params` | 否 | 指标参数，英文逗号分隔（跳过数据参数；不足补默认、超限报错）。按签名转换：int/float 数字、bool（0/1、true/false）、**str 原样**（如 `t_pivot_r` 的 `params=3,classic`） |
 | `data` | 否 | **复合序列数据表达式**（URL 编码，见 7.3）。空 → 后端按 `data_param` 默认列 |
 | `refresh` | 否 | `1` 强制重算（跳过 5min/20 条缓存），默认 `0` |
 | `start` / `end` | 否 | 起止日期 `YYYY-MM-DD` |
@@ -689,19 +692,25 @@ a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL
 | 参数形式 | 说明 |
 |---|---|
 | 基本数据 | `close`/`high`/`low`/`open`/`volume`/`amount` 单词 |
-| 前序变量 | 引用前面步骤的结果（`a`/`b`/`c`…） |
+| 前序变量 | 引用前面步骤的结果（`a`/`b`/`c`…，含**跨数据参数**） |
 | 数字 / bool | 如 `5`、`true` |
+| 字符串字面量 | `'classic'` / `"pivot"`（单双引号均可） |
 | 嵌套函数调用 | 任意深度，≤ 10 层 |
 
 - 函数仅限 `talib.*` 或 Indicator 目录指标
 - talib 多输出用 `[i]` 索引；无索引时默认取第一个输出
+- **跨数据参数共享变量**：多数据参数（如 sr_width 的 relative_low/relative_high）按签名顺序共享同一变量环境，后序表达式可直接引用前序编辑区变量（如 `b=sr_width(a,high)` 中的 `a`）
 - 前端标签规则：数据参数名非列名 → `{参数名}数据`（如 `arr数据`、`sequence数据`、`speed数据`）+ 复合序列分步编辑；列名 → `{参数名}数据` + 仅基本数据选择
 
 ### 7.4 前端分步编辑器交互
 
-- 步骤每行 `a/b/c… = 函数(参数)`，函数下拉分「Indicator 指标」「talib 函数」两组
-- 参数行类型：基本数据 / 引用变量（仅前序步骤）/ 数字 / bool
-- 步骤可删空（仅用基本数据时 `data` 提交所选列名）；「最终结果」可选任意步骤变量
+- 步骤每行「第 N 步 = 函数(参数)」，函数下拉分「Indicator 指标」「talib 函数」两组
+- **选择 Indicator 指标后参数自动预填**（按 `signature`：data → 对应数据列、数字 → 默认值、bool → 0/1、str → 字符串），用户只需改值；talib 无签名信息保留手动类型（基本数据 / 引用变量 / 数字 / bool / 字符串）
+- **数据参数（kind=data）值下拉合并两组**：基本数据列（`col:列名`）+ 前序步骤（`var:全局变量下标`，含跨编辑区），支持嵌套复合；类型标注动态（列 / 引用）
+- 变量命名跨编辑区**全局连续**（a/b/c… → d/e/f…），提交无同名冲突
+- 步骤可删空（仅用基本数据时 `data` 提交所选列名）；多步时「最终结果」可选任意步骤（显示 `第 N 步：函数名`）
+- 普通参数表单：int/float 文本输入、bool 0/1 下拉、**str 文本输入**（默认值预填）、类型标注（int/float/0-1/str）
+- 「详细文档」只读框展示 `doc02`（完整 __doc__）；指标下拉选中区只显示 `doc` 描述（可搜索）
 - 已应用列表展示 `数据: <表达式>` tag；K 线对象变更后按 store 中的 data 表达式自动重放
 
 ***
@@ -719,3 +728,7 @@ a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL
 | 2026-09-25 | pyInd 财务字段自动拉取：`ndarray`（FN 编号）参数前端忽略、后端自动拉取通达信专业财务数据并按公告日期阶梯对齐；新增 t_value_reversion（t_pe / t_pe_ratio_to_ma / t_linreg_zscore） |
 | 2026-09-25 | 滚动市盈率（TTM）：财务字段注入前自动滚动年化（累计口径 TTM 公式 / 单季滚动 4 期），t_pe 输出 TTM PE，消除季节性跳变 |
 | 2026-09-26 | 多数据参数支持：`data` 参数支持 JSON 对象（多数据参数如 sr_width 的 relative_low/relative_high）；前端每数据参数独立分步编辑器，列名参数隐藏（后端默认该列） |
+| 2026-09-26 | pyInd 填写方式优化：选择 Indicator 函数后按 `signature` 自动预填参数（数据列/默认值/0-1）；步骤参数显示"参数名+类型标注"；bool 改 0/1 下拉；步骤编辑器极简化（删除基本数据行与复合序列分区，单步无最终结果） |
+| 2026-09-26 | 复合类型完善：数据参数值下拉合并"基本数据列 + 前序步骤"（跨编辑区），值编码 `col:列名` / `var:全局变量下标`；后端 `_resolve_data_expr` 支持共享 env，多数据参数按签名顺序共享变量（后序可引用前序编辑区步骤）；变量命名跨编辑区全局连续（a/b/c…d/e/f…） |
+| 2026-09-26 | 字符串参数支持：`signature` 增加 `str` 类型（如 t_pivot_r 的 style）；`_parse_params` 原样接收字符串；表达式支持字符串字面量 `'xxx'`/`"xxx"`；前端参数表单与步骤编辑器支持 string 类型 |
+| 2026-09-27 | 文档与 UI：指标下拉选中区只显示 `doc` 描述（可搜索）、下拉面板显示"名称—完整描述"（多行）；新增"详细文档"只读框（`doc02` 完整 __doc__） |
