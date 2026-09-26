@@ -28,7 +28,7 @@
 
         <!-- 数据源：复合序列数据参数（arr/sequence/relative_low 等非列名）分步编辑（极简）；
              列名数据参数（close/high…）数据列由签名固定、后端默认取该列，前端隐藏 -->
-        <el-form-item v-for="(ed, ei) in compositeEditors" :key="ed.name" :label="`${ed.name}数据`">
+        <el-form-item v-for="(ed, ei) in compositeEditors" :key="ed.name" :label="`${ed.name}列`">
           <div class="data-form">
             <!-- 无步骤：直接使用 close 列 -->
             <div v-if="!ed.steps.length" class="step-empty">
