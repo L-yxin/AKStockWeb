@@ -14,13 +14,16 @@
           <el-select v-model="selectedName" filterable placeholder="选择 Python 指标" style="width: 100%"
             @change="onSelectChange">
             <el-option v-for="it in indicatorList" :key="it.name" :value="it.name"
-              :label="`${it.doc || it.name}`">
+              :label="`${it.name}${it.doc ? '—' + it.doc.slice(0, 12) : ''}`">
               <span class="ind-opt-label">
                 <b class="ind-opt-name">{{ it.name }}</b>
                 <span v-if="it.doc" class="ind-opt-doc"> — {{ it.doc }}</span>
               </span>
             </el-option>
           </el-select>
+        </el-form-item>
+        <el-form-item label="详细文档" v-if="selectedSpec && selectedSpec.doc02">
+          <el-input type="textarea" v-model="selectedSpec.doc02" placeholder="详细文档" :readonly="true"  :rows="3"></el-input>
         </el-form-item>
 
         <!-- 数据源：复合序列数据参数（arr/sequence/relative_low 等非列名）分步编辑（极简）；
