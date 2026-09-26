@@ -14,91 +14,113 @@
           <el-select v-model="selectedName" filterable placeholder="选择 Python 指标" style="width: 100%"
             @change="onSelectChange">
             <el-option v-for="it in indicatorList" :key="it.name" :value="it.name"
-              :label="`${it.name}${it.doc ? ' — ' + it.doc : ''}`" />
+              :label="`${it.doc || it.name}`">
+              <span class="ind-opt-label">
+                <b class="ind-opt-name">{{ it.name }}</b>
+                <span v-if="it.doc" class="ind-opt-doc"> — {{ it.doc }}</span>
+              </span>
+            </el-option>
           </el-select>
         </el-form-item>
 
-        <!-- 数据源：仅数据参数名为 arr 的指标（mew_low_point / percent_change_nb）显示复合序列分步编辑器；
-             其他指标（high/close/sequence 等）只显示基本数据选择 -->
-        <el-form-item :label="dataLabel" v-if="selectedSpec">
+        <!-- 数据源：复合序列数据参数（arr/sequence/relative_low 等非列名）分步编辑（极简）；
+             列名数据参数（close/high…）数据列由签名固定、后端默认取该列，前端隐藏 -->
+        <el-form-item v-for="(ed, ei) in compositeEditors" :key="ed.name" :label="`${ed.name}数据`">
           <div class="data-form">
-            <div class="data-field">
-              <span class="param-label">{{ isComposite ? '基本数据' : dataParamName }}</span>
-              <el-select v-model="basicData" size="small" style="flex: 1" placeholder="基本数据列">
-                <el-option v-for="b in basicOptions" :key="b" :value="b" :label="b" />
-              </el-select>
-              <span class="param-type">列</span>
+            <!-- 无步骤：直接使用 close 列 -->
+            <div v-if="!ed.steps.length" class="step-empty">
+              <span class="step-empty-tip">直接使用 close 列</span>
+              <el-button size="small" text type="primary" @click="addStep(ed)">+ 步骤</el-button>
             </div>
-            <!-- 仅 arr 数据参数：复合序列分步编辑 -->
-            <template v-if="isComposite">
-              <div class="data-field data-head">
-                <span class="param-label">复合序列</span>
-                <span class="data-head-tip">分步计算（每步结果自动命名 a、b、c…）</span>
-                <el-button size="small" text type="primary" @click="addStep" style="margin-left:auto">+ 步骤</el-button>
+            <!-- 步骤列表（图2 格式：函数一行 + 参数平铺） -->
+            <div v-for="(step, si) in ed.steps" :key="si" class="step-box">
+              <div class="step-head">
+                <span class="step-var">第 {{ si + 1 }} 步</span>
+                <el-select v-model="step.func" filterable size="small" style="flex: 1" placeholder="选择函数"
+                  @change="onStepFuncChange(step)">
+                  <el-option-group label="Indicator 指标">
+                    <el-option v-for="f in indicatorList" :key="f.name" :value="f.name"
+                      :label="`${f.name}${f.doc ? ' — ' + f.doc.slice(0, 12) : ''}`" />
+                  </el-option-group>
+                  <el-option-group label="talib 函数">
+                    <el-option v-for="f in talibFuncs" :key="f" :value="'talib.' + f" :label="'talib.' + f" />
+                  </el-option-group>
+                </el-select>
+                <el-button size="small" text type="danger"
+                  @click="removeStep(ed, si)">×</el-button>
               </div>
-              <!-- 步骤列表 -->
-              <div v-for="(step, si) in steps" :key="si" class="step-box">
-                <div class="step-head">
-                  <span class="step-var">{{ stepVar(si) }} =</span>
-                  <el-select v-model="step.func" filterable size="small" style="flex: 1" placeholder="选择函数"
-                    @change="onStepFuncChange(step)">
-                    <el-option-group label="Indicator 指标">
-                      <el-option v-for="f in indicatorList" :key="f.name" :value="f.name"
-                        :label="`${f.name}${f.doc ? ' — ' + f.doc.slice(0, 12) : ''}`" />
+              <div class="step-params">
+                <div v-for="(p, pi) in step.params" :key="pi" class="param-field">
+                  <!-- 已知 Indicator 函数：自动类型，显示"参数名 + 值控件 + 类型标注" -->
+                  <span v-if="stepFnSpec(step)" class="param-label">{{ stepParamName(step, pi) }}</span>
+                  <el-select v-else v-model="p.type" size="small" style="width: 96px">
+                    <el-option value="basic" label="基本数据" />
+                    <el-option value="var" label="引用变量" />
+                    <el-option value="number" label="数字" />
+                    <el-option value="bool" label="bool" />
+                    <el-option value="string" label="字符串" />
+                  </el-select>
+                  <!-- ind 函数数据参数：合并"基本数据列 + 前序步骤（本编辑区 + 前序编辑区）"，支持嵌套复合 -->
+                  <el-select v-if="isIndDataParam(step, pi)" v-model="p.value" size="small" style="flex: 1">
+                    <el-option-group label="基本数据">
+                      <el-option v-for="b in basicOptions" :key="b" :value="'col:' + b" :label="b" />
                     </el-option-group>
-                    <el-option-group label="talib 函数">
-                      <el-option v-for="f in talibFuncs" :key="f" :value="'talib.' + f" :label="'talib.' + f" />
+                    <el-option-group v-if="allRefSteps(ed, si).length" label="前序步骤">
+                      <el-option v-for="r in allRefSteps(ed, si)" :key="r.g" :value="'var:' + r.g"
+                        :label="r.label" />
                     </el-option-group>
                   </el-select>
-                  <el-button size="small" text type="danger"
-                    @click="removeStep(si)">×</el-button>
+                  <el-select v-else-if="p.type === 'basic'" v-model="p.value" size="small" style="flex: 1">
+                    <el-option v-for="b in basicOptions" :key="b" :value="b" :label="b" />
+                  </el-select>
+                  <el-select v-else-if="p.type === 'var'" v-model="p.value" size="small" style="flex: 1"
+                    placeholder="引用前序步骤">
+                    <el-option v-for="si2 in priorIndexes(ed, si)" :key="si2" :value="si2"
+                      :label="`第 ${si2 + 1} 步：${stepFuncName(ed, si2)}`" />
+                  </el-select>
+                  <el-select v-else-if="p.type === 'bool'" v-model="p.value" size="small" style="flex: 1">
+                    <el-option :value="true" label="true / 1" />
+                    <el-option :value="false" label="false / 0" />
+                  </el-select>
+                  <el-input v-else-if="p.type === 'string'" v-model="p.value" size="small" style="flex: 1" placeholder="字符串" />
+                  <el-input v-else v-model="p.value" size="small" style="flex: 1" placeholder="数字" />
+                  <span v-if="stepFnSpec(step)" class="param-type">
+                    {{ isIndDataParam(step, pi) && String(p.value).startsWith('var:') ? '引用' : stepParamType(step, pi) }}
+                  </span>
+                  <el-button size="small" text type="danger" @click="step.params.splice(pi, 1)">×</el-button>
                 </div>
-                <div class="step-params">
-                  <div v-for="(p, pi) in step.params" :key="pi" class="param-field">
-                    <el-select v-model="p.type" size="small" style="width: 96px">
-                      <el-option value="basic" label="基本数据" />
-                      <el-option value="var" label="引用变量" />
-                      <el-option value="number" label="数字" />
-                      <el-option value="bool" label="bool" />
-                    </el-select>
-                    <el-select v-if="p.type === 'basic'" v-model="p.value" size="small" style="flex: 1">
-                      <el-option v-for="b in basicOptions" :key="b" :value="b" :label="b" />
-                    </el-select>
-                    <el-select v-else-if="p.type === 'var'" v-model="p.value" size="small" style="flex: 1"
-                      placeholder="引用第几步结果">
-                      <el-option v-for="si2 in priorIndexes(si)" :key="si2" :value="stepVar(si2)"
-                        :label="`${stepVar(si2)}（第 ${si2 + 1} 步）`" />
-                    </el-select>
-                    <el-input v-else v-model="p.value" size="small" style="flex: 1" placeholder="值"
-                      :placeholder="p.type === 'bool' ? 'true / false / 0 / 1' : '数字'" />
-                    <el-button size="small" text type="danger" @click="step.params.splice(pi, 1)">×</el-button>
-                  </div>
-                  <el-button size="small" text type="primary" @click="step.params.push({ type: 'number', value: '' })">
-                    + 参数
-                  </el-button>
-                </div>
+                <el-button size="small" text type="primary" @click="step.params.push({ type: 'number', value: '' })">
+                  + 参数
+                </el-button>
               </div>
-              <!-- 最终结果选择 -->
-              <div class="data-field" v-if="steps.length">
-                <span class="param-label">最终结果</span>
-                <el-select v-model="finalVar" size="small" style="flex: 1">
-                  <el-option v-for="si2 in priorIndexes(steps.length)" :key="si2" :value="stepVar(si2)"
-                    :label="`${stepVar(si2)}（第 ${si2 + 1} 步）`" />
-                </el-select>
+              <div class="step-foot">
+                <el-button size="small" text type="primary" @click="addStep(ed)">+ 步骤</el-button>
               </div>
-              <div class="data-hint">
-                每步函数仅限 Indicator 目录或 talib.*（参数：基本数据 / 前步变量 / 数字 / bool）；talib 多输出用 [i] 索引（如 MACD[1] 取 SIGNAL）；第一步建议基于基本数据
-              </div>
-            </template>
+            </div>
+            <!-- 最终结果（仅多步时选择哪一步作为结果；单步自动用该步） -->
+            <div class="data-field" v-if="ed.steps.length > 1">
+              <span class="param-label">最终结果</span>
+              <el-select v-model="ed.finalVar" size="small" style="flex: 1">
+                <el-option v-for="si2 in priorIndexes(ed, ed.steps.length)" :key="si2" :value="si2"
+                  :label="`第 ${si2 + 1} 步：${stepFuncName(ed, si2)}`" />
+              </el-select>
+            </div>
+            <div class="data-hint">
+              多步按顺序计算，最后一步即结果（可改）；talib 多输出用 [i] 索引（如 MACD[1] 取 SIGNAL）
+            </div>
           </div>
         </el-form-item>
 
-        <!-- 参数：表单形式（每个参数一个输入项，默认值预填，必填校验） -->
-        <el-form-item label="参数" v-if="selectedSpec && selectedSpec.params.length">
+        <!-- 参数：表单形式（每个参数一个输入项，默认值预填，必填校验）；ndarray（财务 FN 字段）自动注入，前端忽略 -->
+        <el-form-item label="参数" v-if="selectedSpec && editableParams.length">
           <div class="param-form">
-            <div v-for="p in selectedSpec.params" :key="p.name" class="param-field">
+            <div v-for="p in editableParams" :key="p.name" class="param-field">
               <span class="param-label">{{ p.name }}</span>
-              <el-input v-model="paramsForm[p.name]" size="small"
+              <el-select v-if="p.annotation === 'bool'" v-model="paramsForm[p.name]" size="small" style="flex: 1">
+                <el-option value="true" label="true / 1" />
+                <el-option value="false" label="false / 0" />
+              </el-select>
+              <el-input v-else v-model="paramsForm[p.name]" size="small"
                 :placeholder="p.required ? '必填' : `默认 ${p.default ?? ''}`" />
               <span class="param-type">{{ p.annotation === 'bool' ? '0/1' : p.annotation }}</span>
             </div>
@@ -185,29 +207,89 @@ const appliedList = ref([])
 
 // 参数表单：{ 参数名: 输入值 }，切换指标时重建并预填默认值
 const paramsForm = reactive({})
-// 数据源：基本数据列（默认 close）+ 复合序列分步编辑器
-const basicData = ref('close')
+// 数据源：多个数据参数（如 sr_width 的 relative_low / relative_high），每参数独立编辑区
+// editor = { name, basicData, steps, finalVar }
 const basicOptions = ['close', 'high', 'low', 'open', 'volume', 'amount']
-// 步骤：{ func: 'talib.MA' | 指标名, params: [{type:'basic'|'var'|'number'|'bool', value}] }
-const steps = ref([{ func: 'talib.MA', params: [{ type: 'basic', value: 'close' }, { type: 'number', value: '5' }] }])
-const finalVar = ref('a')
 const talibFuncs = ref([])
+const dataEditors = ref([])
 
-// 步骤变量名：a / b / c / ...（按步骤下标）
-const stepVar = (si) => String.fromCharCode(97 + si)
-// 可被引用的前序步骤（含自己，供"最终结果"；参数引用只允许前序）
-const priorIndexes = (si) => Array.from({ length: si + 1 }, (_, i) => i)
+// 步骤变量名：跨数据参数全局连续（a,b,c… 第一个编辑器；续 d,e,f… 第二个编辑器）
+const globalVarOffset = (ed) => {
+  let offset = 0
+  for (const e of dataEditors.value) {
+    if (e === ed) return offset
+    offset += e.steps.length
+  }
+  return offset
+}
+// 编辑器内第 si 步的全局变量名：a / b / c / ...
+const stepVar = (ed, si) => String.fromCharCode(97 + globalVarOffset(ed) + si)
+// 编辑器内可被引用的前序步骤（含自己，供"最终结果"；参数引用只允许前序）
+const priorIndexes = (ed, si) => Array.from({ length: si + 1 }, (_, i) => i)
+// 步骤函数显示名（去掉 talib. 前缀）
+const stepFuncName = (ed, si) => {
+  const st = ed.steps[si]
+  return st && st.func ? String(st.func).replace(/^talib\./, '') : '(未选函数)'
+}
+// 步骤函数是否为已知 Indicator 指标（有 signature，可自动类型）
+const stepFnSpec = (step) => {
+  const n = String(step.func || '')
+  return indicatorList.value.find(it => it.name === n) || null
+}
+// 步骤函数可编辑签名项（data + param，过滤财务 FN）
+const stepSigItems = (step) => {
+  const spec = stepFnSpec(step)
+  return spec ? (spec.signature || []).filter(p => p.kind === 'data' || p.kind === 'param') : []
+}
+// 第 pi 个参数的名称
+const stepParamName = (step, pi) => {
+  const item = stepSigItems(step)[pi]
+  return item ? item.name : `参数${pi + 1}`
+}
+// 第 pi 个参数的类型标注（列 / int / float / 0-1）
+const stepParamType = (step, pi) => {
+  const item = stepSigItems(step)[pi]
+  if (!item) return 'var'
+  if (item.annotation === 'bool') return '0/1'
+  if (item.annotation === 'ndarray') return '列'
+  return item.annotation || 'var'
+}
+// 是否为 ind 函数数据参数（kind='data'，值可列可引用前序步骤）
+const isIndDataParam = (step, pi) => {
+  const item = stepSigItems(step)[pi]
+  return !!(item && item.kind === 'data')
+}
+// 可引用步骤列表（跨编辑区）：本编辑区前序步骤 + 前面编辑区（前序数据参数）全部步骤
+// 返回 { g: 全局变量下标, label }，变量字母 = fromCharCode(97 + g)（与全局连续命名一致）
+const allRefSteps = (ed, si) => {
+  const list = []
+  let offset = 0
+  for (const e of dataEditors.value) {
+    if (e === ed) {
+      for (let i = 0; i < si; i++) {
+        list.push({ g: offset + i, label: `第 ${i + 1} 步：${stepFuncName(ed, i)}` })
+      }
+      return list
+    }
+    for (let i = 0; i < e.steps.length; i++) {
+      list.push({ g: offset + i, label: `${e.name}·第 ${i + 1} 步：${stepFuncName(e, i)}` })
+    }
+    offset += e.steps.length
+  }
+  return list
+}
 
 const selectedSpec = computed(() =>
   indicatorList.value.find(it => it.name === selectedName.value) || null)
-// 复合序列数据参数：非 ohlcv 列名的参数名（arr / sequence / speed 等）→ 支持分步编辑
-const isComposite = computed(() => {
-  const dp = selectedSpec.value?.data_param
-  return !!dp && !['close', 'high', 'low', 'open', 'volume', 'amount', 'oi'].includes(dp)
-})
-const dataParamName = computed(() => selectedSpec.value?.data_param || '数据')
-// 标签 = 数据参数名 + 数据（arr数据 / sequence数据 / speed数据 / close数据 / high数据…）
-const dataLabel = computed(() => `${dataParamName.value}数据`)
+// 可编辑参数：过滤财务自动注入（ndarray / FN 字段，前端忽略，后端自动拉取）
+const editableParams = computed(() =>
+  (selectedSpec.value?.params || []).filter(p => p.annotation !== 'ndarray')
+)
+// 列名数据参数（数据列由签名固定，后端默认取该列，前端隐藏）
+const COLUMN_PARAMS = ['close', 'high', 'low', 'open', 'volume', 'amount', 'oi']
+const isColumnParam = (name) => COLUMN_PARAMS.includes(name)
+// 复合序列数据参数（arr / sequence / speed / relative_low…非列名）→ 显示分步编辑区
+const compositeEditors = computed(() => dataEditors.value.filter(ed => !isColumnParam(ed.name)))
 
 // ---------- 列表加载 ----------
 const loadList = async () => {
@@ -226,17 +308,21 @@ const loadList = async () => {
 }
 loadList()
 
-// 切换指标：重建参数表单（必填参数留空，其余预填默认值）；重置数据源
-// 数据参数名为列（close/high/low/open/volume/amount）时默认该列，否则默认 close
+// 默认步骤：talib.MA(close, 5)
+const defaultStep = () => ({ func: 'talib.MA', params: [{ type: 'basic', value: 'close' }, { type: 'number', value: '5' }] })
+// 切换指标：重建参数表单 + 每个数据参数独立编辑区（列名参数隐藏，复合序列参数显示分步编辑）
 const onSelectChange = () => {
   Object.keys(paramsForm).forEach(k => delete paramsForm[k])
-  const dp = selectedSpec.value?.data_param
-  basicData.value = basicOptions.includes(dp) ? dp : 'close'
-  steps.value = [{ func: 'talib.MA', params: [{ type: 'basic', value: 'close' }, { type: 'number', value: '5' }] }]
-  finalVar.value = 'a'
+  const dps = selectedSpec.value?.data_params || []
+  dataEditors.value = dps.map(name => ({
+    name,
+    basicData: basicOptions.includes(name) ? name : 'close',
+    steps: [defaultStep()],
+    finalVar: 0,
+  }))
   const spec = selectedSpec.value
   if (spec) {
-    spec.params.forEach(p => {
+    editableParams.value.forEach(p => {
       if (!p.required && p.default !== null && p.default !== undefined) {
         paramsForm[p.name] = String(p.default)
       } else {
@@ -246,42 +332,78 @@ const onSelectChange = () => {
   }
 }
 
-// ---------- 分步编辑 ----------
-const addStep = () => {
-  const si = steps.value.length
-  steps.value.push({ func: '', params: [{ type: 'basic', value: 'close' }, { type: 'number', value: '' }] })
-  finalVar.value = stepVar(si)
+// ---------- 分步编辑（每个数据参数独立 steps） ----------
+const addStep = (ed) => {
+  const si = ed.steps.length
+  ed.steps.push({ func: '', params: [{ type: 'basic', value: 'close' }, { type: 'number', value: '' }] })
+  ed.finalVar = si
 }
-const removeStep = (si) => {
-  steps.value.splice(si, 1)
-  // 修正最终结果指向（删除后变量名整体前移）
-  if (steps.value.length === 0) { finalVar.value = 'a' }
-  else if (!priorIndexes(steps.value.length - 1).some(i => stepVar(i) === finalVar.value)) {
-    finalVar.value = stepVar(steps.value.length - 1)
-  }
+const removeStep = (ed, si) => {
+  ed.steps.splice(si, 1)
+  // 修正最终结果指向（删除后步骤下标整体前移）
+  if (ed.steps.length === 0) { ed.finalVar = 0 }
+  else if (ed.finalVar >= ed.steps.length) { ed.finalVar = ed.steps.length - 1 }
+  else if (ed.finalVar > si) { ed.finalVar -= 1 }
 }
-// 切换函数后重置参数为合理默认（Indicator 指标带 doc，talib 默认 close+空数字）
+// 切换函数后按指标 signature 自动预填参数：
+//   data 参数 → 基本数据列（列名参数取该列，否则 close）
+//   param int/float → 数字（默认值预填）；param bool → true/false
+//   财务 FN（kind=fin）自动注入，跳过
+// talib 无签名信息 → 默认 [基本数据 close, 数字]
 const onStepFuncChange = (step) => {
-  const isTalib = String(step.func).startsWith('talib.')
-  step.params = [
-    { type: 'basic', value: 'close' },
-    { type: 'number', value: isTalib ? '' : '' },
-  ]
+  const fnName = String(step.func || '')
+  const spec = indicatorList.value.find(it => it.name === fnName)
+  if (spec && spec.signature) {
+    step.params = spec.signature
+      .filter(p => p.kind === 'data' || p.kind === 'param')
+      .map(p => {
+        if (p.kind === 'data') {
+          // 值编码 'col:列名'（基本数据，可下拉改选前序步骤 'var:下标'）
+          return { type: 'basic', value: 'col:' + (basicOptions.includes(p.name) ? p.name : 'close') }
+        }
+        if (p.annotation === 'bool') {
+          return { type: 'bool', value: p.default ?? false }
+        }
+        if (p.annotation === 'str') {
+          return { type: 'string', value: (p.default !== null && p.default !== undefined) ? String(p.default) : '' }
+        }
+        const d = p.default
+        return { type: 'number', value: (d !== null && d !== undefined) ? String(d) : '' }
+      })
+    return
+  }
+  step.params = [{ type: 'basic', value: 'close' }, { type: 'number', value: '' }]
 }
 
-// 收集数据源表达式：复合序列指标有步骤时分步序列化，否则/列名指标返回所选基本数据列
+// 收集数据源表达式：
+//   列名参数 → 列名本身（后端默认取该列）
+//   复合序列参数 → 分步表达式（每参数独立）
+//   多个数据参数 → JSON 对象 {"参数名": 表达式}；单个 → 旧字符串格式（后端兼容）
 const collectData = () => {
-  if (!selectedSpec.value || !isComposite.value) return basicData.value || 'close'
-  if (!steps.value.length) return basicData.value || 'close'
-  const exprs = steps.value.map((s, si) => {
-    const fn = String(s.func || '').trim()
-    const args = s.params.map(p => {
-      if (p.type === 'number' || p.type === 'bool') return String(p.value ?? '').trim() || '0'
-      return String(p.value ?? '').trim() || (p.type === 'basic' ? 'close' : '')
+  if (!selectedSpec.value) return ''
+  const editors = dataEditors.value
+  if (!editors.length) return ''
+  const exprs = {}
+  editors.forEach(ed => {
+    if (isColumnParam(ed.name)) { exprs[ed.name] = ed.name; return }
+    if (!ed.steps.length) { exprs[ed.name] = ed.basicData || 'close'; return }
+    const parts = ed.steps.map((s, si) => {
+      const fn = String(s.func || '').trim()
+      const args = s.params.map(p => {
+        if (p.type === 'number' || p.type === 'bool') return String(p.value ?? '').trim() || '0'
+        if (p.type === 'string') return `'${String(p.value ?? '').trim()}'`
+        if (p.type === 'var') return String(stepVar(ed, Number(p.value) || 0))
+        let v = String(p.value ?? '').trim()
+        if (v.startsWith('col:')) v = v.slice(4)
+        else if (v.startsWith('var:')) return String.fromCharCode(97 + (Number(v.slice(4)) || 0))
+        return v || (p.type === 'basic' ? 'close' : '')
+      })
+      return `${stepVar(ed, si)}=${fn}(${args.join(',')})`
     })
-    return `${stepVar(si)}=${fn}(${args.join(',')})`
+    exprs[ed.name] = `${parts.join(';')};${stepVar(ed, ed.finalVar)}`
   })
-  return `${exprs.join(';')};${finalVar.value}`
+  if (editors.length === 1) return exprs[editors[0].name]
+  return JSON.stringify(exprs)
 }
 
 // ---------- 应用 ----------
@@ -289,10 +411,10 @@ const syncStore = () => {
   searchStore.setPythonIndicators(appliedList.value.map(it => ({ ...it })))
 }
 
-// 收集表单值 → 参数数组（顺序与 spec.params 一致；必填缺失/非数字报错）
+// 收集表单值 → 参数数组（顺序与 editableParams 一致；必填缺失/非数字报错）
 const collectParams = (spec) => {
   const params = []
-  for (const p of spec.params) {
+  for (const p of editableParams.value) {
     const raw = paramsForm[p.name]
     if (p.required && (raw === undefined || raw === null || String(raw).trim() === '')) {
       ElMessage.warning(`缺少必填参数：${p.name}`)
@@ -300,6 +422,11 @@ const collectParams = (spec) => {
     }
     if (raw === undefined || raw === null || String(raw).trim() === '') {
       params.push(p.default)
+      continue
+    }
+    // 字符串参数：原样传入
+    if (p.annotation === 'str') {
+      params.push(String(raw).trim())
       continue
     }
     // bool 参数：接受 0/1 与 true/false（含预填的默认值字符串）
@@ -378,6 +505,19 @@ defineExpose({ appliedList })
 .pyind-panel {
   padding: 4px 8px;
 }
+.ind-opt-label {
+  display: block;
+  white-space: normal;
+  line-height: 1.45;
+  padding: 2px 0;
+}
+.ind-opt-name {
+  color: #e2e8f0;
+}
+.ind-opt-doc {
+  color: #94a3b8;
+  font-size: 12px;
+}
 .panel-head {
   display: flex;
   align-items: center;
@@ -405,6 +545,21 @@ defineExpose({ appliedList })
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.step-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.step-empty-tip {
+  font-size: 12px;
+  color: #64748b;
+}
+.step-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
 }
 .data-head-tip {
   font-size: 11px;

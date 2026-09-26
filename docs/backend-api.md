@@ -630,8 +630,15 @@
 |---|---|
 | `name` | 指标名（对应 `{name}.js`） |
 | `data_param` | 数据参数名。**ohlcv 列名**（close/high/low/open/volume/amount/oi）→ 仅基本数据选择；**非列名**（arr/sequence/speed 等）→ 复合序列（显示分步编辑器） |
-| `params[]` | 可配置参数（跳过数据参数）：name / annotation（int/float/bool）/ required / default |
+| `params[]` | 可配置参数（跳过数据参数）：name / annotation（int/float/bool/ndarray）/ required / default。**annotation 为 `ndarray` 的参数前端忽略（不渲染输入框、不提交）**，后端按参数名自动注入：FN 编号（FN1/FN2…）→ 财务数据（TTM 化）；K 线列名（low/high…）→ K 线对应列（如 t_sr_position 的 low/high） |
 | `talib_funcs` | talib 全部函数名（约 158 个），供分步编辑器的函数下拉分组展示 |
+
+> **财务字段（pe / pe_ratio_to_ma）**：数据参数后的 `ndarray` 参数为通达信专业财务字段
+> （FN1 基本每股收益 / FN2 扣非 / FN501 稀释 / FN311 单季）。前端忽略该字段；
+> 后端 `/api/pyInd/{name}.js` 识别后自动经 `tq.get_financial_data(announce_time)` 拉取，
+> **先滚动年化（TTM）**：累计口径 TTM(r) = 最新报告期 + 上年年报 − 上年同期（单季口径滚动 4 期），
+> 再按公告日期阶梯对齐到 K 线（前向填充、发布日跳变、无未来函数），与 K 线等长后注入指标。
+> 因此 pe 为**滚动市盈率（TTM PE）**，无季节性锯齿。
 
 ### 7.2 `GET /api/pyInd/{name}.js` —— 计算指标
 
@@ -709,3 +716,6 @@ a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL
 | 2026-09-06 | 前端新增多周期切换（1/5/15/30分、60分、日/周/月K）；signalQualityEvaluate 结果卡片展示（报告 file:/// URL + 指标摘要）；评测基准周期固定日线；修复月线周期映射（1M）与信号时区匹配 |
 | 2026-09-06 | K线分页加载：`/ws/kline` 请求新增可选 `limit`（非空时后端只返回最近 N 根，升序）；K线时间戳统一按 Asia/Shanghai 序列化（不依赖后端进程时区）；前端 init/forward 均按 limit 分页，滚动可逐级加载更早数据直到数据源边界；K线技术指标启用状态提升至 store，切换标的/重新加载后自动重放 |
 | 2026-09-25 | 新增 Python 指标（pyInd）REST API：`/api/pyInd/list`（指标清单 + talib_funcs 158 个）、`/api/pyInd/{name}.js`（后端计算 + 内存缓存 5min/20 条）；`data` 复合序列表达式支持分步流程 / 多序列 / talib 多输出 `[i]` 索引；前端面板改为分步编辑器（基本数据 + 引用变量 + 数字/bool），数据参数名标签规则（arr/sequence/speed 等非列名 → 复合序列，ohlcv 列名 → 仅基本数据） |
+| 2026-09-25 | pyInd 财务字段自动拉取：`ndarray`（FN 编号）参数前端忽略、后端自动拉取通达信专业财务数据并按公告日期阶梯对齐；新增 t_value_reversion（t_pe / t_pe_ratio_to_ma / t_linreg_zscore） |
+| 2026-09-25 | 滚动市盈率（TTM）：财务字段注入前自动滚动年化（累计口径 TTM 公式 / 单季滚动 4 期），t_pe 输出 TTM PE，消除季节性跳变 |
+| 2026-09-26 | 多数据参数支持：`data` 参数支持 JSON 对象（多数据参数如 sr_width 的 relative_low/relative_high）；前端每数据参数独立分步编辑器，列名参数隐藏（后端默认该列） |
