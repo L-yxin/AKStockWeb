@@ -294,7 +294,7 @@ function renderBar() {
   const ns = props.result.horizons
   const series = sigs.map((s, i) => ({
     name: s.displayName,
-    type: 'bar',
+    type: 'line',
     data: ns.map(n => {
       const v = barValue(s, n, barMetric.value)
       if (v === null || v === undefined) return null
@@ -303,6 +303,10 @@ function renderBar() {
       return Number(v.toFixed(4))
     }),
     itemStyle: { color: SIG_COLORS[i % SIG_COLORS.length] },
+    lineStyle: { color: SIG_COLORS[i % SIG_COLORS.length], width: 2 },
+    symbol: 'circle',
+    symbolSize: 6,
+    label: { show: true, position: 'top', color: '#94a3b8', fontSize: 10 },
   }))
   chart.setOption({
     backgroundColor: 'transparent',
@@ -347,9 +351,13 @@ function renderDist() {
   }
   const series = sigs.map((s, i) => ({
     name: s.displayName,
-    type: 'bar',
+    type: 'line',
     data: ns.map(n => pick(s, n)),
     itemStyle: { color: SIG_COLORS[i % SIG_COLORS.length] },
+    lineStyle: { color: SIG_COLORS[i % SIG_COLORS.length], width: 2 },
+    symbol: 'circle',
+    symbolSize: 6,
+    label: { show: true, position: 'top', color: '#94a3b8', fontSize: 10 },
   }))
   chart.setOption({
     backgroundColor: 'transparent',

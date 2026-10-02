@@ -121,6 +121,24 @@ async function signalAnalyze(payload) {
   return resp.json()
 }
 
+// ============================================================
+// Monaco 编辑器（pythonCode 智能补全 + hover 文档）
+// ============================================================
+
+/** 获取 ta/ind/klf 补全名单 */
+async function getPyCodeCompletions() {
+  const resp = await fetch(`${base_http_url}/api/pyCodeCompletions`)
+  if (!resp.ok) throw new Error(`补全名单获取失败 (${resp.status})`)
+  return resp.json()
+}
+
+/** 获取函数签名 + docstring（hover 用） */
+async function getPyCodeDoc(ns, name) {
+  const resp = await fetch(`${base_http_url}/api/pyCodeDoc?ns=${ns}&name=${encodeURIComponent(name)}`)
+  if (!resp.ok) throw new Error(`文档获取失败 (${resp.status})`)
+  return resp.json()
+}
+
 export {
   base_ws_url,
   base_http_url,
@@ -141,4 +159,7 @@ export {
   fetchPyIndicatorJs,
   // 信号表现分析 REST
   signalAnalyze,
+  // Monaco 编辑器 REST
+  getPyCodeCompletions,
+  getPyCodeDoc,
 }

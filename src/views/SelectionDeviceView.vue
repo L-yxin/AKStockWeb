@@ -35,6 +35,16 @@
         <el-option label="后复权" value="back" />
       </el-select>
 
+      <div class="period-bar">
+        <button v-for="p in PERIODS" :key="`${p.span}${p.type}`" type="button"
+          class="period-btn" :class="{ active: `${p.span}${p.type}` === periodKey }"
+          @click="switchPeriod(p)">
+          {{ p.label }}
+        </button>
+        <input v-model="customPeriod" type="text" class="period-custom"
+          placeholder="自定义" @keyup.enter="applyCustomPeriod" />
+      </div>
+
       <el-button type="primary" class="search-btn" @click="handleSearch">
         加载数据
       </el-button>
@@ -50,6 +60,49 @@ const symbolOptions = ref([])
 const symbolLoading = ref(false)
 
 const dateRange = ref([searchStore.startDate, searchStore.endDate])
+
+// 周期切换
+const PERIODS = [
+  { label: '1分', type: 'minute', span: 1 },
+  { label: '5分', type: 'minute', span: 5 },
+  { label: '15分', type: 'minute', span: 15 },
+  { label: '30分', type: 'minute', span: 30 },
+  { label: '60分', type: 'hour', span: 1 },
+  { label: '日K', type: 'day', span: 1 },
+  { label: '周K', type: 'week', span: 1 },
+  { label: '月K', type: 'month', span: 1 },
+]
+const periodKey = computed(() => {
+  const p = searchStore.period
+  if (!p) return '1day'
+  return `${p.span}${p.type}`
+})
+const switchPeriod = (p) => {
+  if (periodKey.value === `${p.span}${p.type}`) return
+  searchStore.setPeriod(p)
+}
+
+// 自定义周期输入（如 2d / 30m / 1w）
+const customPeriod = ref('')
+const applyCustomPeriod = () => {
+  const raw = customPeriod.value.trim()
+  if (!raw) return
+  const m = raw.match(/^(\d+)\s*([mhdwMy])$/i)
+  if (!m) {
+    ElMessage.warning('周期格式：数字+字母（m分/h时/d日/w周/M月/y年）')
+    return
+  }
+  const span = parseInt(m[1])
+  const suffix = m[2].toLowerCase()
+  const typeMap = { m: 'minute', h: 'hour', d: 'day', w: 'week', y: 'month' }
+  if (suffix === 'm' && m[2] === 'M') typeMap.M = 'month'
+  const type = typeMap[suffix]
+  if (!type) return
+  // y 年 → month * 12
+  const realSpan = suffix === 'y' ? span * 12 : span
+  searchStore.setPeriod({ type, span: realSpan })
+  customPeriod.value = ''
+}
 
 // URL 参数处理：searchStore 起止时间被 URL 修改后同步日期选择器显示（仅新增，不影响既有逻辑）
 watch(
@@ -167,6 +220,48 @@ const handleSearch = () => {
 .adjust-select {
   width: 108px;
 }
+.period-bar {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(148,163,184,0.08);
+  border: 1px solid rgba(148,163,184,0.2);
+  border-radius: 6px;
+}
+.period-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #94a3b8;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.period-btn:hover {
+  color: #e2e8f0;
+  background: rgba(148,163,184,0.12);
+}
+.period-btn.active {
+  color: #fff;
+  background: #3b82f6;
+  border-color: #3b82f6;
+}
+.period-custom {
+  width: 60px;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: #94a3b8;
+  background: transparent;
+  border: 1px solid rgba(148,163,184,0.2);
+  border-radius: 4px;
+  outline: none;
+}
+.period-custom:focus {
+  color: #e2e8f0;
+  border-color: rgba(59,130,246,0.5);
+}
+.period-custom::placeholder { color: #64748b; }
 .search-btn {
   --el-component-size: 34px;
   border-radius: 6px;

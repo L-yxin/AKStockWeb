@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as monaco from 'monaco-editor'
+import { getPyCodeCompletions, getPyCodeDoc } from '@/api'
 
 // ============================================================
 // Props / Emits
@@ -40,8 +41,7 @@ const nsMap: Record<string, CompletionDef[]> = { ta: [], ind: [], klf: [] }
 
 async function loadNsCompletions() {
   try {
-    const r = await fetch('http://localhost:8000/api/pyCodeCompletions')
-    const j = await r.json()
+    const j = await getPyCodeCompletions()
     if (j.code === 0 && j.data) {
       for (const ns of ['ta', 'ind', 'klf'] as const) {
         nsMap[ns] = (j.data[ns] || []).map((name: string) => ({
@@ -106,8 +106,7 @@ async function fetchDoc(ns: string, name: string): Promise<string> {
   const key = `${ns}.${name}`
   if (docCache[key] !== undefined) return docCache[key]
   try {
-    const r = await fetch(`http://localhost:8000/api/pyCodeDoc?ns=${ns}&name=${encodeURIComponent(name)}`)
-    const j = await r.json()
+    const j = await getPyCodeDoc(ns, name)
     if (j.code === 0 && j.data) {
       const { signature, doc } = j.data
       const sigLine = `\`${ns}.${name}${signature}\``

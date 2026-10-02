@@ -7,6 +7,8 @@
 export {}
 declare global {
   const 
+  getPyCodeCompletions: typeof import('./api/index.js')['
+  const 
   getPyIndicatorList: typeof import('./api/index.js')['
   const 
   signalAnalyze: typeof import('./api/index.js')['
@@ -44,6 +46,7 @@ declare global {
   const getCurrentScope: typeof import('vue').getCurrentScope
   const getCurrentWatcher: typeof import('vue').getCurrentWatcher
   const getMarkers: typeof import('./chart/markers.js').getMarkers
+  const getPyCodeDoc: typeof import('./api/index.js').getPyCodeDoc
   const h: typeof import('vue').h
   const inject: typeof import('vue').inject
   const isProxy: typeof import('vue').isProxy

@@ -38,7 +38,7 @@ const TEMPLATES = [
   { name: 'RSI 超卖 (14,30)', code: 'return ta.RSI(c, 14) < 30' },
   { name: 'RSI 超卖 (9,20)', code: 'return ta.RSI(c, 9) < 20' },
   { name: 'MACD 金叉', code: 'macd, sig, hist = ta.MACD(c, 12, 26, 9)\nreturn hist > 0' },
-  { name: '均线多头 (5>20)', code: 'return ind.MA(c, 5) > ind.MA(c, 20)' },
+  { name: '均线多头 (5>20)', code: 'return ta.MA(c, 5) > ta.MA(c, 20)' },
   { name: '布林下轨破', code: 'u, m, l = ta.BBANDS(c, 20, 2, 2)\nreturn c < l' },
   { name: '成交量放大', code: 'return v > ta.MA(v, 20) * 1.5' },
   { name: 'KLineForm 买入函数', code: 'return klf.buy.is_rsi_oversold(c, h, l, 6, 12, 24, 30)' },

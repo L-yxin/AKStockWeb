@@ -82,8 +82,8 @@
                 </el-button>
               </div>
 
-              <!-- 标的 -->
-              <div class="sa-symbol">
+              <!-- 标的：自动跟随主图，只读 -->
+              <div class="sa-symbol" v-if="false">
                 <div class="sa-field">
                   <span class="sa-label">代码</span>
                   <el-input v-model="sig.symbol.code" size="small" placeholder="如 sh600000" class="sa-input" />
@@ -117,10 +117,6 @@
                 style="width: 100%" @change="scheduleAutoAnalyze" />
             </div>
             <div class="sa-field">
-              <span class="sa-label">周期</span>
-              <el-select v-model="period" size="small" style="width: 96px" @change="scheduleAutoAnalyze">
-                <el-option v-for="(label, val) in PERIOD_OPTIONS" :key="val" :label="label" :value="val" />
-              </el-select>
               <span class="sa-label sa-label-sm">minSample</span>
               <el-input-number v-model="minSample" size="small" :min="1" :max="100" style="width: 84px"
                 @change="scheduleAutoAnalyze" />
@@ -447,6 +443,9 @@ const mergeConsecutive = ref(false)
 const returnType = ref('simple')
 const minSample = ref(5)
 
+// 主图周期变化时自动跟随
+watch(() => searchStore.period, () => { period.value = storePeriodToBackend(); scheduleAutoAnalyze() }, { deep: true })
+
 // ---------- 提交 / 防抖自动分析 ----------
 const submitting = ref(false)
 const result = ref(null)
@@ -508,14 +507,14 @@ const submitAnalyze = async () => {
         const args = s.fnKey === '__custom__' ? parseArgs(s.argsText) : buildArgs(s)
         return {
           displayName: item ? `${item.info}（${item.method}）` : name,
-          symbol: { ...s.symbol },
+          symbol: defaultSymbol(),
           name,
           args,
         }
       }
       return {
         displayName: '自定义 pythonCode',
-        symbol: { ...s.symbol },
+        symbol: defaultSymbol(),
         pythonCode: s.pythonCode,
       }
     }),
@@ -533,6 +532,9 @@ const submitAnalyze = async () => {
     if (res.code === 0 && res.data) {
       result.value = res.data
       errors.value = res.data.errors || []
+      if (errors.value.length) {
+        ElMessage.warning(`部分信号无效：${errors.value.map(e => e.error || e).join('；')}`)
+      }
       nextTick(() => {
         applyMainMarkers()
       })
@@ -707,10 +709,19 @@ onBeforeUnmount(() => {
   font-size: 11px;
   color: #64748b;
   flex: none;
-  width: 34px;
+  min-width: 34px;
+  max-width: 100px;
   text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sa-label-sm { width: auto; }
+.sa-period-readonly { display: inline-block; padding: 2px 10px; font-size: 12px; color: #94a3b8; background: rgba(148,163,184,0.1); border-radius: 4px; }
+.sa-period-group { display: flex; gap: 4px; flex-wrap: wrap; }
+.sa-period-btn { padding: 4px 10px; font-size: 12px; color: #94a3b8; background: rgba(148,163,184,0.08); border: 1px solid rgba(148,163,184,0.2); border-radius: 6px; cursor: pointer; transition: all 0.15s; }
+.sa-period-btn:hover { color: #e2e8f0; border-color: rgba(148,163,184,0.4); }
+.sa-period-btn.active { color: #fff; background: #3b82f6; border-color: #3b82f6; }
 .req { color: #f56c6c; margin-left: 2px; }
 .sa-input { flex: 1; min-width: 0; }
 .sa-fn-select { flex: 1; min-width: 0; }

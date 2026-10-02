@@ -6,6 +6,7 @@
 // ============================================================================
 import { registerIndicator } from 'klinecharts'
 import { fetchPyIndicatorJs } from '@/api'
+import { useSearchParametersStore } from '@/stores/searchParameters'
 
 // 数据缓存：key(`${name}|${params}|${code}|${period}|${adjust}`) -> Map(timestamp -> value)
 const dataCache = new Map()
@@ -70,8 +71,10 @@ export async function applyPyIndicator(chart, { name, params = [], data = '', on
     .join(',')
   const key = `${name}|${data}|${paramsStr}|${code}|${period}|${adjust}`
 
+  const store = useSearchParametersStore()
   const jsText = await fetchPyIndicatorJs(name, paramsStr, {
     code, period, adjust, data, refresh: refresh ? 1 : 0,
+    start: store.startDate || '', end: store.endDate || '',
   })
   // 执行 JS（后端仅生成 window.__pyInd 赋值，受控内容）
   const exec = new Function('window', jsText)

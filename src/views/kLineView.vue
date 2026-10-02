@@ -4,15 +4,6 @@
 
     <!-- 模拟交易：未来K线遮挡层（绝对定位在 K 线 canvas 之上，pointer-events 穿透） -->
     <div class="sim-future-mask" :style="maskStyle"></div>
-
-    <!-- 周期切换工具条（klinecharts setPeriod：{span, type}） -->
-    <div class="period-toolbar">
-      <button v-for="p in PERIODS" :key="periodKey(p)" type="button"
-        class="period-btn" :class="{ active: isActivePeriod(p) }"
-        @click="switchPeriod(p)">
-        {{ p.label }}
-      </button>
-    </div>
   </div>
 
   <div ref="unifiedTooltip" class="unified-tooltip" v-show="tooltipVisible"
