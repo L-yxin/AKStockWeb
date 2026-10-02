@@ -8,45 +8,18 @@
 
       <!-- 功能菜单栏 -->
       <div class="menubar">
-        <div class="menu-item" @click="openDrawer('K_lineTechnicalIndicators')">
-          <el-icon><TrendCharts /></el-icon>
-          <span>K线技术指标</span>
-        </div>
-        <div class="menu-sep" />
-        <div class="menu-item" @click="openDrawer('buyingAndSellingIndicator')">
-          <el-icon><Bell /></el-icon>
-          <span>买卖提示指标</span>
-        </div>
-        <div class="menu-sep" />
-        <div class="menu-item" @click="loadGetTradingSignals">
-          <el-icon><Download /></el-icon>
-          <span>加载pybroker订单</span>
-        </div>
-        <div class="menu-sep" />
-        <div class="menu-item" @click="openDrawer('signalQualityEvaluate')">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>信号质量评测</span>
-        </div>
-        <div class="menu-sep" />
-        <div class="menu-item" @click="openSimulation">
-          <el-icon><Coin /></el-icon>
-          <span>模拟交易</span>
-        </div>
-        <div class="menu-sep" />
-        <div class="menu-item" @click="openDrawer('cloudMetricUpload')">
-          <el-icon><TrendCharts /></el-icon>
-          <span>云指标</span>
-        </div>
-        <div class="menu-sep" />
-        <div class="menu-item" @click="openDrawer('pythonIndicator')">
-          <el-icon><Cpu /></el-icon>
-          <span>Python指标</span>
-        </div>
+        <template v-for="(item, idx) in MENUS" :key="item.key">
+          <div v-if="item.sep" class="menu-sep" />
+          <div v-else class="menu-item" @click="handleMenu(item)">
+            <el-icon><component :is="item.icon" /></el-icon>
+            <span>{{ item.label }}</span>
+          </div>
+        </template>
         <div class="menubar-spacer" />
         <div class="menubar-status">数据源：通达信后台</div>
       </div>
 
-      <!-- K线主区域 + 模拟交易右侧面板（启用模拟交易时不弹抽屉，直接固定在右侧） -->
+      <!-- K线主区域 + 右侧固定面板（模拟交易 / 信号表现分析，不弹抽屉） -->
       <div class="chart-area">
         <div class="kline-main">
           <k-line-view ref="klineRef" />
@@ -54,66 +27,89 @@
         <div v-show="simPanelVisible" class="sim-side">
           <simulation-panel :chart-ref="klineRef" @close="closeSimulation" />
         </div>
+        <div v-show="saPanelVisible" class="sa-side">
+          <signal-quality-panel :chart-ref="klineRef" @close="closeSignalAnalyze" />
+        </div>
       </div>
     </el-main>
   </el-container>
 
   <!-- 功能抽屉 -->
-  <el-drawer v-model="drawerVisible" :title="getCH(activeMenu)" direction="rtl" size="440px" append-to-body
+  <el-drawer v-model="drawerVisible" :title="activeMenuLabel" direction="rtl" size="440px" append-to-body
     class="app-drawer">
     <indicator-panel v-if="activeMenu === 'K_lineTechnicalIndicators'" :chart-ref="klineRef"
       :preset-enabled="INITIAL_ENABLED_INDICATORS" />
     <long-short-indicator-panel v-else-if="activeMenu === 'buyingAndSellingIndicator'" :chart-ref="klineRef" />
-    <signal-quality-panel v-else-if="activeMenu === 'signalQualityEvaluate'" :chart-ref="klineRef" />
     <cloud-metric-panel v-else-if="activeMenu === 'cloudMetricUpload'" />
     <python-indicator-panel v-else-if="activeMenu === 'pythonIndicator'" :chart-ref="klineRef" />
   </el-drawer>
 </template>
 
 <script setup>
-import { TrendCharts, Bell, Download, DataAnalysis, Coin, Upload, Cpu } from '@element-plus/icons-vue'
+import { TrendCharts, Bell, Download, DataAnalysis, Coin, Cpu } from '@element-plus/icons-vue'
 import { ws_getTradingSignals_url } from '@/api'
 import { INITIAL_ENABLED_INDICATORS } from '@/config/indicatorDefaults'
-// URL 参数处理（code/adjust/start/end/indicators/ls/trades/cloud）
 import { applyUrlParams } from '@/urlParams'
 
 const searchStore = useSearchParametersStore()
 
-// 抽屉控制（K线技术指标/买卖提示指标/信号质量评测）
+// ---------- 菜单配置（抽离，新增菜单项只改这里） ----------
+const MENUS = [
+  { key: 'K_lineTechnicalIndicators', label: 'K线技术指标', icon: TrendCharts, action: 'drawer' },
+  { sep: true },
+  { key: 'buyingAndSellingIndicator', label: '买卖提示指标', icon: Bell, action: 'drawer' },
+  { sep: true },
+  { key: 'loadTrades', label: '加载pybroker订单', icon: Download, action: 'loadTrades' },
+  { sep: true },
+  { key: 'signalAnalyze', label: '信号表现分析', icon: DataAnalysis, action: 'signalPanel' },
+  { sep: true },
+  { key: 'simulation', label: '模拟交易', icon: Coin, action: 'simPanel' },
+  { sep: true },
+  { key: 'cloudMetricUpload', label: '云指标', icon: TrendCharts, action: 'drawer' },
+  { sep: true },
+  { key: 'pythonIndicator', label: 'Python指标', icon: Cpu, action: 'drawer' },
+]
+
 const drawerVisible = ref(false)
 const activeMenu = ref('')
 const klineRef = ref(null)
 
-// 模拟交易：不弹抽屉，面板固定在 K 线图右侧
 const simPanelVisible = ref(false)
-// 面板显示/隐藏会改变 K 线区宽度 → 通知图表 resize，避免画布与容器错位
+const saPanelVisible = ref(false)
+
+const activeMenuLabel = computed(() => {
+  const m = MENUS.find(x => x.key === activeMenu.value)
+  return m?.label || activeMenu.value
+})
+
 const notifyChartResize = () => {
   setTimeout(() => window.dispatchEvent(new Event('resize')), 30)
 }
-const openSimulation = () => {
-  simPanelVisible.value = true
-  notifyChartResize()
+
+const handleMenu = (item) => {
+  if (item.action === 'drawer') {
+    activeMenu.value = item.key
+    drawerVisible.value = true
+  } else if (item.action === 'loadTrades') {
+    loadGetTradingSignals()
+  } else if (item.action === 'simPanel') {
+    saPanelVisible.value = false
+    simPanelVisible.value = true
+    notifyChartResize()
+  } else if (item.action === 'signalPanel') {
+    simPanelVisible.value = false
+    saPanelVisible.value = true
+    notifyChartResize()
+  }
 }
+
 const closeSimulation = () => {
   simPanelVisible.value = false
   notifyChartResize()
 }
-
-const openDrawer = (menu) => {
-  activeMenu.value = menu
-  drawerVisible.value = true
-}
-
-const getCH = (key) => {
-  const map = {
-    K_lineTechnicalIndicators: 'K线技术指标',
-    buyingAndSellingIndicator: '买卖提示指标',
-    signalQualityEvaluate: '信号质量评测',
-    simulation: '模拟交易',
-    cloudMetricUpload: '云指标',
-    pythonIndicator: 'Python指标',
-  }
-  return map[key] || key
+const closeSignalAnalyze = () => {
+  saPanelVisible.value = false
+  notifyChartResize()
 }
 
 // ---------- 加载 pybroker 交易订单 ----------
@@ -142,31 +138,18 @@ const loadGetTradingSignals = () => {
         return
       }
 
-      // 1. 清除旧的信号标记
       klineRef.value?.clearAllMarkers(chart)
 
-      // 2. 遍历信号，转换为标记参数并添加
       const markers = []
       for (const signal of data.configs) {
         const { datetime, value, type, mes } = signal
-
-        // 将本地日期字符串转为"本地时间当 UTC"的 epoch（与 K 线时间戳语义一致，
-        // 显式 +08:00 避免受浏览器时区影响）
         const iso = datetime.includes('T') ? datetime : datetime.replace(' ', 'T')
         const tsStr = /\d{1,2}:\d{2}(:\d{2})?/.test(iso) ? iso : iso + 'T00:00:00'
         const timestamp = new Date(tsStr + '+08:00').getTime()
-
-        markers.push({
-          timestamp,
-          value,          // 价格位置
-          type,           // B/S/T 等
-          mes             // 悬停显示的消息
-        })
+        markers.push({ timestamp, value, type, mes })
       }
 
-      // 3. 将所有标记一次性添加到图表
       klineRef.value?.addMarkers(chart, markers, 'stock')
-
       ElMessage.success(`成功加载 ${markers.length} 个交易信号`)
     } catch (e) {
       console.error('处理交易信号失败:', e)
@@ -182,8 +165,6 @@ const loadGetTradingSignals = () => {
   }
 }
 
-// ---------- URL 参数处理 ----------
-// 解析地址栏参数并应用（无参数时不动作）；子组件 kLineView 先挂载，chart 已就绪
 onMounted(() => {
   applyUrlParams({
     getChartInstance: () => klineRef.value,
@@ -271,6 +252,14 @@ onMounted(() => {
 .sim-side {
   width: 440px;
   flex: none;
+  overflow-y: auto;
+  border-left: 1px solid rgba(148, 163, 184, 0.15);
+  padding-left: 10px;
+}
+.sa-side {
+  width: 660px;
+  flex: none;
+  height: 100%;
   overflow-y: auto;
   border-left: 1px solid rgba(148, 163, 184, 0.15);
   padding-left: 10px;

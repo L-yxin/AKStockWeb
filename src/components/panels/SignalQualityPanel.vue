@@ -1,460 +1,825 @@
 <template>
-  <div class="sq-panel">
-    <!-- 评测上下文 -->
-    <div class="sq-meta">
-      <el-tag effect="dark" class="meta-tag">{{ searchStore.symbol }}</el-tag>
-      <el-tag effect="plain" type="info" class="meta-tag">{{ currentPeriod }}</el-tag>
-      <el-tag effect="plain" type="info" class="meta-tag">{{ adjustText }}</el-tag>
-      <span class="meta-desc">提交买卖价格/时间，由后台 akquant 完成信号质量评测（按日线回放）</span>
-    </div>
-
-    <!-- 操作栏 -->
-    <div class="sq-toolbar">
-      <el-button type="primary" plain @click="addSignal">
-        <el-icon><Plus /></el-icon>&nbsp;添加信号
-      </el-button>
-      <el-button @click="importFromChart" :disabled="!canImport">
-        <el-icon><Download /></el-icon>&nbsp;从图表导入
-      </el-button>
-      <el-button @click="clearSignals" :disabled="signals.length === 0">清空</el-button>
-    </div>
-
-    <!-- 信号列表 -->
-    <div class="sq-list" v-if="signals.length > 0">
-      <div v-for="(sig, idx) in signals" :key="idx" class="sq-row">
-        <div class="sq-row-head">
-          <span class="sq-index">#{{ idx + 1 }}</span>
-          <el-tag :type="sig.direction === 'long' ? 'danger' : 'success'" effect="dark" size="small"
-            class="sq-direction">
-            {{ sig.direction === 'long' ? '做多' : '做空' }}
-          </el-tag>
-          <el-button text size="small" type="danger" class="sq-delete" @click="removeSignal(idx)">
-            <el-icon><Delete /></el-icon>
-          </el-button>
-        </div>
-        <div class="sq-row-body">
-          <el-date-picker v-model="sig.datetime" type="datetime"
-            placeholder="信号时间" value-format="YYYY-MM-DD HH:mm:ss"
-            class="sq-datetime" :clearable="false" />
-          <el-input-number v-model="sig.price" :precision="4" :step="0.01"
-            :min="0" placeholder="价格" class="sq-price" controls-position="right" />
-          <el-input v-model="sig.note" placeholder="备注（可选）" class="sq-note" />
-        </div>
+  <div class="sa-panel">
+    <!-- 顶栏 -->
+    <div class="sa-head">
+      <div class="sa-head-left">
+        <span class="sa-title">信号表现分析</span>
+        <el-tag size="small" effect="dark" class="meta-tag">{{ searchStore.symbol }}</el-tag>
       </div>
-    </div>
-    <el-empty v-else description="暂无评测信号，可手动添加或从图表导入" :image-size="72" />
-
-    <!-- 提交 -->
-    <div class="sq-footer">
-      <el-button type="primary" size="large" class="sq-submit"
-        :disabled="signals.length === 0 || submitting" :loading="submitting"
-        @click="submitEvaluation">
-        提交后台评测（{{ signals.length }} 条）
-      </el-button>
+      <el-button text size="small" @click="$emit('close')"><el-icon><Close /></el-icon></el-button>
     </div>
 
-    <!-- 评测结果：报告 URL + 指标摘要（后台 akquant 评测完成返回） -->
-    <div class="sq-result" v-if="result">
-      <div class="sq-result-head">
-        <span class="sq-result-title">评测报告已生成</span>
-        <el-button text size="small" type="primary" @click="openReport">
-          <el-icon><View /></el-icon>&nbsp;打开报告
+    <div class="sa-body">
+      <!-- ================= 左列：配置 ================= -->
+      <div class="sa-left">
+        <!-- 信号配置 -->
+        <div class="sa-section">
+          <div class="sa-section-head">
+            <span class="sa-section-title">信号配置</span>
+            <el-button size="small" plain type="primary" @click="addSignal">
+              <el-icon><Plus /></el-icon>&nbsp;添加信号
+            </el-button>
+          </div>
+
+          <div v-if="signals.length" class="sa-list">
+            <div v-for="(sig, idx) in signals" :key="idx" class="sa-signal">
+              <div class="sa-signal-head">
+                <span class="sa-index">#{{ idx + 1 }}</span>
+                <el-radio-group v-model="sig.mode" size="small">
+                  <el-radio-button value="klineform">函数</el-radio-button>
+                  <el-radio-button value="pycode">代码</el-radio-button>
+                </el-radio-group>
+                <el-button text size="small" type="danger" class="sa-del" @click="removeSignal(idx)">
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </div>
+
+              <!-- KLineForm：函数下拉 + 参数表单 -->
+              <template v-if="sig.mode === 'klineform'">
+                <div class="sa-field">
+                  <span class="sa-label">函数</span>
+                  <el-select v-model="sig.fnKey" size="small" filterable placeholder="选择后台指标函数" class="sa-fn-select"
+                    @change="onFnChange(sig)">
+                    <el-option-group v-for="g in fnGroups" :key="g.label" :label="g.label">
+                      <el-option v-for="opt in g.options" :key="opt.value" :label="opt.label" :value="opt.value" />
+                    </el-option-group>
+                    <el-option label="✚ 自定义函数名…" value="__custom__" />
+                  </el-select>
+                </div>
+
+                <!-- 自定义函数：文本输入（无目录定义） -->
+                <template v-if="sig.fnKey === '__custom__'">
+                  <div class="sa-field">
+                    <span class="sa-label">函数名</span>
+                    <el-input v-model="sig.customName" size="small" placeholder="如 ma_golden_cross" class="sa-input" />
+                  </div>
+                  <div class="sa-field">
+                    <span class="sa-label">参数</span>
+                    <el-input v-model="sig.argsText" size="small" type="textarea" :rows="2"
+                      placeholder="每行一个参数：&#10;6,12,24&#10;30" />
+                  </div>
+                </template>
+
+                <!-- 目录函数：按参数定义渲染表单 -->
+                <template v-else>
+                  <div v-for="p in userParams(sig)" :key="p.name" class="sa-field">
+                    <span class="sa-label">{{ p.name }}<span v-if="p.required" class="req">*</span></span>
+                    <el-tooltip v-if="p.doc" :content="p.doc" placement="top">
+                      <el-icon class="doc-icon"><InfoFilled /></el-icon>
+                    </el-tooltip>
+                    <component :is="inputComponent(p)" v-model="sig.formParams[p.name]" v-bind="inputProps(p)"
+                      class="sa-input" />
+                  </div>
+                  <div v-if="!userParams(sig).length" class="sa-noparam">该函数无需参数</div>
+                </template>
+              </template>
+
+              <!-- pythonCode -->
+              <div v-else class="sa-field sa-code-wrap">
+                <span class="sa-label">代码</span>
+                <el-button size="small" @click="openEditor(sig)">
+                  打开代码编辑器 (Monaco)
+                </el-button>
+              </div>
+
+              <!-- 标的 -->
+              <div class="sa-symbol">
+                <div class="sa-field">
+                  <span class="sa-label">代码</span>
+                  <el-input v-model="sig.symbol.code" size="small" placeholder="如 sh600000" class="sa-input" />
+                  <el-select v-model="sig.symbol.adjust" size="small" style="width: 88px">
+                    <el-option label="前复权" value="qfq" />
+                    <el-option label="后复权" value="hfq" />
+                    <el-option label="不复权" value="none" />
+                  </el-select>
+                </div>
+                <div class="sa-field">
+                  <span class="sa-label">起止</span>
+                  <el-date-picker v-model="sig.symbol.start" size="small" type="date" value-format="YYYY-MM-DD"
+                    placeholder="起始" class="sa-input" />
+                  <el-date-picker v-model="sig.symbol.end" size="small" type="date" value-format="YYYY-MM-DD"
+                    placeholder="结束" class="sa-input" />
+                </div>
+              </div>
+            </div>
+          </div>
+          <el-empty v-else description="暂无信号，点击「添加信号」" :image-size="48" />
+        </div>
+
+        <!-- 分析参数 -->
+        <div class="sa-section">
+          <div class="sa-section-head"><span class="sa-section-title">分析参数</span></div>
+          <div class="sa-params">
+            <div class="sa-field">
+              <span class="sa-label">观察期</span>
+              <el-date-picker v-model="range" size="small" type="daterange" value-format="YYYY-MM-DD"
+                range-separator="~" start-placeholder="开始" end-placeholder="结束"
+                style="width: 100%" @change="scheduleAutoAnalyze" />
+            </div>
+            <div class="sa-field">
+              <span class="sa-label">周期</span>
+              <el-select v-model="period" size="small" style="width: 96px" @change="scheduleAutoAnalyze">
+                <el-option v-for="(label, val) in PERIOD_OPTIONS" :key="val" :label="label" :value="val" />
+              </el-select>
+              <span class="sa-label sa-label-sm">minSample</span>
+              <el-input-number v-model="minSample" size="small" :min="1" :max="100" style="width: 84px"
+                @change="scheduleAutoAnalyze" />
+            </div>
+            <div class="sa-field">
+              <span class="sa-label">N 节点</span>
+              <el-select v-model="horizons" size="small" multiple collapse-tags collapse-tags-tooltip
+                placeholder="未来 K 线数" style="width: 100%" @change="scheduleAutoAnalyze">
+                <el-option v-for="h in HORIZON_OPTIONS" :key="h" :label="`${h} 根`" :value="h" />
+              </el-select>
+            </div>
+            <div class="sa-field">
+              <span class="sa-label">收益</span>
+              <el-radio-group v-model="returnType" size="small" @change="scheduleAutoAnalyze">
+                <el-radio-button value="simple">简单</el-radio-button>
+                <el-radio-button value="log">对数</el-radio-button>
+              </el-radio-group>
+              <span class="sa-label sa-label-sm">合并</span>
+              <el-switch v-model="mergeConsecutive" size="small" @change="scheduleAutoAnalyze" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 提交 -->
+        <el-button type="primary" class="sa-submit-btn" :loading="submitting" @click="submitAnalyze">
+          {{ result ? '重新分析' : '开始分析' }}
         </el-button>
-        <el-button text size="small" @click="copyReportPath">
-          <el-icon><CopyDocument /></el-icon>&nbsp;复制路径
-        </el-button>
       </div>
-      <div class="sq-report-path" :title="result.report_url">{{ result.report_url }}</div>
 
-      <div class="sq-metrics">
-        <div v-for="m in metricItems" :key="m.label" class="sq-metric-item">
-          <span class="sq-metric-label">{{ m.label }}</span>
-          <span class="sq-metric-value" :class="m.cls">{{ m.value }}</span>
+      <!-- ================= 右列：结果 ================= -->
+      <div class="sa-right">
+        <template v-if="result">
+          <div v-if="errors.length" class="sa-errors">
+            <div v-for="(e, i) in errors" :key="i" class="sa-error">
+              <b>{{ e.displayName || e.name }}</b>：{{ e.error }}
+            </div>
+          </div>
+          <el-empty v-if="!result.signals.length" description="全部信号无效，请检查配置" :image-size="56" />
+
+          <template v-if="result.signals.length">
+            <!-- 打开可视化窗口 -->
+            <div class="sa-dialog-entry">
+              <el-button type="primary" size="large" class="sa-open-btn" @click="dialogVisible = true">
+                <el-icon><DataAnalysis /></el-icon>&nbsp;打开可视化窗口
+              </el-button>
+              <p class="sa-dialog-tip">弹窗可拖拽、可调整大小 · 统计表 / 柱状图 / 分布图</p>
+            </div>
+
+            <!-- 主图信号标记（叠加到主页 K 线图） -->
+            <div class="sa-chart-block">
+              <div class="sa-sub-head">
+                <span class="sa-sub-title">主图信号标记</span>
+                <el-tag size="small" type="info">叠加到主 K 线图</el-tag>
+              </div>
+              <div class="sa-mainmarker">
+                <p>分析完成后，各信号触发点已叠加到主图 K 线上（红色「买」标签 + 方向线）。</p>
+                <p>重新分析会刷新全部标记；若信号标的与主图标的不一致，标记位置请留意错位。</p>
+                <p class="sa-chart-foot">
+                  <template v-for="s in result.signals" :key="s.name">
+                    <span class="sig-meta">{{ s.displayName }}：{{ s.signalCount ?? 0 }} 个 · {{ s.timeSpan || '' }}</span><br />
+                  </template>
+                </p>
+              </div>
+            </div>
+          </template>
+        </template>
+
+        <div v-else class="sa-placeholder">
+          <el-icon class="ph-icon"><DataAnalysis /></el-icon>
+          <span>配置左侧信号后点击「开始分析」</span>
         </div>
       </div>
-
-      <div class="sq-signal-stats" v-if="result.signals">
-        <span class="sq-ss-label">信号统计</span>
-        <el-tag size="small" effect="plain" type="info">共 {{ result.signals.total }} 条</el-tag>
-        <el-tag size="small" effect="plain" type="success">成交 {{ result.signals.matched }} 条</el-tag>
-        <el-tag size="small" effect="plain" type="warning" v-if="result.signals.ignored_total">
-          忽略 {{ result.signals.ignored_total }} 条
-        </el-tag>
-        <el-tag size="small" effect="plain" type="danger" v-if="result.signals.missed_dates?.length">
-          错失 {{ result.signals.missed_dates.length }} 个日期
-        </el-tag>
-      </div>
-      <div class="sq-warning" v-if="result.signals?.warning">{{ result.signals.warning }}</div>
     </div>
+
+    <SignalQualityDialog v-model:visible="dialogVisible" :result="result" :errors="errors" :return-type="returnType" />
+<CodeEditorDialog v-model:visible="editorVisible" v-model="editingSig.pythonCode"
+  v-if="editingSig" />
   </div>
 </template>
 
 <script setup>
-import { Plus, Delete, Download, View, CopyDocument } from '@element-plus/icons-vue'
-import { ws_signalQualityEvaluate_url } from '@/api'
-import { getBaseDirection } from '@/chart/markers'
+import { Plus, Delete, Close, InfoFilled, DataAnalysis } from '@element-plus/icons-vue'
+import { signalAnalyze, ws_buyingAndSellingIndicator_url, base_http_url } from '@/api'
+import '@/chart/overlays'
+import SignalQualityDialog from './SignalQualityDialog.vue'
+import CodeEditorDialog from './CodeEditorDialog.vue'
 
 const props = defineProps({
   chartRef: { type: Object, required: true },
 })
+defineEmits(['close'])
 
 const searchStore = useSearchParametersStore()
 
-// ---------- 评测上下文 ----------
-// 周期中文标签（与 kLineView 周期工具条一致）
-const PERIOD_LABELS = {
-  '1minute': '1分', '5minute': '5分', '15minute': '15分', '30minute': '30分',
-  '1hour': '60分', '1day': '日线', '1week': '周线', '1month': '月线',
+// ---------- 周期 ----------
+const PERIOD_OPTIONS = {
+  '1m': '1分钟', '5m': '5分钟', '15m': '15分钟', '30m': '30分钟',
+  '1h': '60分钟', '1d': '日线', '1w': '周线', '1M': '月线',
 }
-const currentPeriod = computed(() => {
+const HORIZON_OPTIONS = [5, 10, 20, 30, 60, 120]
+
+function storePeriodToBackend() {
   const p = searchStore.period || { type: 'day', span: 1 }
-  return PERIOD_LABELS[`${p.span}${p.type}`] || `${p.span}${p.type}`
-})
-const adjustText = computed(() => {
-  const map = { none: '不复权', front: '前复权', back: '后复权' }
-  return map[searchStore.adjust_type] || searchStore.adjust_type
+  if (p.type === 'minute') return `${p.span}m`
+  if (p.type === 'hour') return `${p.span}h`
+  if (p.type === 'day') return '1d'
+  if (p.type === 'week') return '1w'
+  if (p.type === 'month') return '1M'
+  return '1d'
+}
+
+const defaultSymbol = () => ({
+  code: searchStore.symbol,
+  adjust: searchStore.adjust_type === 'front' ? 'qfq' : (searchStore.adjust_type === 'back' ? 'hfq' : 'none'),
+  start: searchStore.startDate || '2019-01-01',
+  end: searchStore.endDate || '2026-12-31',
 })
 
-// klinecharts Period → 后端 period 参数（月线必须大写 1M，否则被后端识别为 1 分钟）
-function periodToBackend(p) {
-  if (!p) return '1d'
-  const { type, span } = p
-  if (type === 'minute') return `${span}m`
-  if (type === 'hour') return `${span}h`
-  if (type === 'day') return '1d'
-  if (type === 'week') return '1w'
-  if (type === 'month') return '1M'
-  return '1d'
+// ---------- 指标目录（后端 WS /ws/buyingAndSellingIndicator） ----------
+const cat = reactive({ buy: [], sell: [] })
+const fnMap = reactive({}) // method -> item
+
+const loadIndicators = () => {
+  const ws = new WebSocket(ws_buyingAndSellingIndicator_url)
+  ws.onopen = () => ws.send('')
+  ws.onmessage = (event) => {
+    ws.close()
+    let data
+    try {
+      data = JSON.parse(event.data)
+      const buyRaw = JSON.parse(data.buy)
+      const sellRaw = JSON.parse(data.sell)
+      cat.buy = convertToArray(buyRaw)
+      cat.sell = convertToArray(sellRaw)
+    } catch (e) {
+      console.error('信号表现分析：指标目录解析失败', e)
+      return
+    }
+    ;[...cat.buy, ...cat.sell].forEach(it => { fnMap[it.method] = it })
+    // 目录就绪后，为已有信号补齐定义与默认参数
+    // - 刚添加未手动修改的默认信号（fnKey='__custom__' 且未填自定义名）→ 自动切到目录首选函数
+    // - 已选目录函数但定义缺失 → 补齐 itemDef/formParams
+    signals.value.forEach(sig => {
+      if (sig.mode !== 'klineform') return
+      if (sig.fnKey === '__custom__' && !sig.customName.trim()) {
+        const first = fnMap['is_rsi_oversold'] || cat.buy[0]
+        if (first) {
+          sig.fnKey = first.method
+          sig.itemDef = first
+          sig.formParams = defaultFormParams(first)
+        }
+        return
+      }
+      if (sig.fnKey !== '__custom__' && fnMap[sig.fnKey] && !sig.itemDef) {
+        sig.itemDef = fnMap[sig.fnKey]
+        sig.formParams = defaultFormParams(sig.itemDef)
+      }
+    })
+  }
+  ws.onerror = (err) => {
+    console.error('加载买卖指标失败:', err)
+    ElMessage.warning('指标目录加载失败，函数下拉不可用，可使用「自定义函数名」')
+  }
+}
+
+const convertToArray = (rawObj) => {
+  const methods = rawObj.method || {}
+  const infos = rawObj.info || {}
+  const types = rawObj.type || {}
+  const params = rawObj.params || {}
+  return Object.keys(methods).map(key => ({
+    method: methods[key],
+    info: infos[key] || '',
+    type: types[key] || '',
+    params: params[key] || { params: [], doc: '' },
+  }))
+}
+
+const fnGroups = computed(() => [
+  { label: `买入指标（${cat.buy.length}）`, options: cat.buy.map(it => ({ value: it.method, label: `${it.info}（${it.method}）` })) },
+  { label: `卖出指标（${cat.sell.length}）`, options: cat.sell.map(it => ({ value: it.method, label: `${it.info}（${it.method}）` })) },
+])
+
+// ---------- 参数类型工具（与买卖提示面板一致） ----------
+const isAutoInjectedParam = (name, annotation) => {
+  const autoNames = ['open_', 'high', 'low', 'close', 'volume', 'open', 'high', 'low', 'close', 'volume']
+  if (autoNames.includes(name)) return true
+  if (annotation && annotation.includes('ndarray')) {
+    return autoNames.some(n => name.toLowerCase().includes(n))
+  }
+  return false
+}
+
+const formatType = (annotation) => {
+  if (!annotation) return 'any'
+  const match = annotation.match(/'([^']+)'/)
+  if (match) return match[1]
+  const parts = annotation.replace('<class ', '').replace('>', '').split('.')
+  return parts[parts.length - 1] || 'any'
+}
+
+const getDefaultByType = (annotation) => {
+  if (!annotation) return ''
+  const t = formatType(annotation).toLowerCase()
+  if (t.includes('int')) return 0
+  if (t.includes('float')) return 0.0
+  if (t.includes('bool')) return false
+  return ''
+}
+
+const userParams = (sig) => {
+  const defs = sig.itemDef?.params?.params || []
+  return defs.filter(p => !isAutoInjectedParam(p.name, p.annotation))
+}
+
+const inputComponent = (p) => {
+  const t = formatType(p.annotation).toLowerCase()
+  if (t.includes('int') || t.includes('float')) return 'el-input-number'
+  if (t.includes('bool')) return 'el-switch'
+  return 'el-input'
+}
+
+const isComplexParam = (p) => {
+  const t = formatType(p.annotation).toLowerCase()
+  return t.includes('config') || t.includes('list')
+}
+
+const inputProps = (p) => {
+  const t = formatType(p.annotation).toLowerCase()
+  const obj = { placeholder: `请输入${p.name}`, size: 'small' }
+  if (t.includes('int')) {
+    obj.step = 1
+    obj.precision = 0
+    obj.controlsPosition = 'right'
+  } else if (t.includes('float')) {
+    obj.step = 0.0001
+    obj.precision = 4
+    obj.controlsPosition = 'right'
+  } else if (t.includes('bool')) {
+    obj.activeText = '开'
+    obj.inactiveText = '关'
+  } else if (isComplexParam(p)) {
+    // 复合 Config / list 参数：逗号分隔字符串（如 RsiConfig "6,12,24"、MaPairsConfig "5,10,10,20"）
+    obj.placeholder = `如 6,12,24（逗号分隔）`
+  }
+  return obj
+}
+
+const defaultFormParams = (item) => {
+  const out = {}
+  const defs = item?.params?.params || []
+  defs.forEach(p => {
+    if (!isAutoInjectedParam(p.name, p.annotation)) {
+      out[p.name] = p.default !== null && p.default !== undefined ? p.default : getDefaultByType(p.annotation)
+    }
+  })
+  return out
+}
+
+const buildArgs = (sig) => {
+  return userParams(sig).map(p => {
+    const v = sig.formParams[p.name]
+    const t = formatType(p.annotation).toLowerCase()
+    if (t.includes('bool')) return v ? '1' : '0'
+    if (t.includes('int') || t.includes('float')) return Number(v)
+    return String(v ?? '')
+  })
+}
+
+const parseArgs = (text) => {
+  if (!text || !text.trim()) return []
+  return text.split('\n').map(l => l.trim()).filter(Boolean).map(v => {
+    if (/^-?\d+(\.\d+)?$/.test(v)) return Number(v)
+    return v
+  })
 }
 
 // ---------- 信号列表 ----------
 const signals = ref([])
 
-const addSignal = () => {
-  signals.value.push({
-    direction: 'long',
-    datetime: '',
-    price: null,
-    note: '',
-  })
+// ---------- Monaco 代码编辑器 ----------
+const editorVisible = ref(false)
+const editingSig = ref(null)
+function openEditor(sig) {
+  editingSig.value = sig
+  editorVisible.value = true
 }
 
-const removeSignal = (idx) => {
-  signals.value.splice(idx, 1)
+const makeSignal = () => {
+  // 默认选目录中 is_rsi_oversold，否则目录第一个买入指标
+  let item = fnMap['is_rsi_oversold'] || cat.buy[0] || null
+  const sig = {
+    mode: 'klineform',
+    fnKey: item ? item.method : '__custom__',
+    customName: '',
+    argsText: '6,12,24\n30',
+    pythonCode: 'return ta.RSI(c, 9) < 30',
+    symbol: defaultSymbol(),
+    itemDef: item || null,
+    formParams: item ? defaultFormParams(item) : {},
+  }
+  return sig
 }
 
-const clearSignals = () => {
-  signals.value = []
-  ElMessage.success('已清空全部信号')
-}
+const addSignal = () => signals.value.push(makeSignal())
+const removeSignal = (idx) => signals.value.splice(idx, 1)
 
-// 从图表当前标记导入（仅当图表存在标记时可用）
-const canImport = computed(() => {
-  const records = props.chartRef?.getMarkers?.()
-  return Array.isArray(records) && records.length > 0
-})
-
-const importFromChart = () => {
-  const records = props.chartRef?.getMarkers?.()
-  if (!Array.isArray(records) || records.length === 0) {
-    ElMessage.warning('图表上暂无信号标记')
+const onFnChange = (sig) => {
+  if (sig.fnKey === '__custom__') {
+    sig.itemDef = null
+    sig.formParams = {}
     return
   }
-  const imported = records.map(rec => {
-    const direction = getBaseDirection(rec.market || 'stock', rec.type) === 1 ? 'long' : 'short'
-    return {
-      direction,
-      datetime: formatTs(rec.timestamp),
-      price: rec.value,
-      note: rec.mes || `信号: ${rec.type}`,
-    }
-  }).filter(s => s.datetime)
-  if (imported.length === 0) {
-    ElMessage.warning('没有可用的信号时间')
-    return
-  }
-  signals.value = signals.value.concat(imported)
-  ElMessage.success(`已从图表导入 ${imported.length} 条信号`)
+  const item = fnMap[sig.fnKey]
+  sig.itemDef = item || null
+  sig.formParams = item ? defaultFormParams(item) : {}
 }
 
-function formatTs(ts) {
-  if (!ts) return ''
-  const d = new Date(ts + 8 * 3600 * 1000) // 与 K 线时间戳语义一致：本地时间当 UTC
-  if (isNaN(d.getTime())) return ''
-  const pad = n => String(n).padStart(2, '0')
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
-}
+// ---------- 分析参数 ----------
+const range = ref([searchStore.startDate || '2019-01-01', searchStore.endDate || '2026-12-31'])
+const period = ref(storePeriodToBackend())
+const horizons = ref([...HORIZON_OPTIONS])
+const mergeConsecutive = ref(false)
+const returnType = ref('simple')
+const minSample = ref(5)
 
-// ---------- 提交评测（只负责提交，后台处理） ----------
+// ---------- 提交 / 防抖自动分析 ----------
 const submitting = ref(false)
-// 评测结果（后台返回：报告 URL + 指标摘要 + 信号统计）
 const result = ref(null)
+const errors = ref([])
+const dialogVisible = ref(false)
+let autoTimer = null
 
-const metricItems = computed(() => {
-  const m = result.value?.metrics
-  if (!m) return []
-  const fmtMoney = (v) => {
-    const n = Number(v)
-    if (isNaN(n)) return '-'
-    return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
-  }
-  return [
-    { label: '初始资金', value: fmtMoney(m.initial_cash), cls: '' },
-    { label: '期末权益', value: fmtMoney(m.final_equity), cls: '' },
-    { label: '总收益率', value: `${Number(m.total_return_pct).toFixed(2)}%`, cls: Number(m.total_return_pct) >= 0 ? 'pos' : 'neg' },
-    { label: '最大回撤', value: `${Number(m.max_drawdown_pct).toFixed(2)}%`, cls: 'neg' },
-    { label: '交易次数', value: m.trade_count ?? '-', cls: '' },
-    { label: '胜率', value: `${Number(m.win_rate_pct).toFixed(1)}%`, cls: '' },
-    { label: '总盈亏', value: fmtMoney(m.total_pnl), cls: Number(m.total_pnl) >= 0 ? 'pos' : 'neg' },
-    { label: '净盈亏', value: fmtMoney(m.net_pnl), cls: Number(m.net_pnl) >= 0 ? 'pos' : 'neg' },
-  ]
-})
-
-const openReport = () => {
-  if (!result.value?.report_url) return
-  try {
-    const w = window.open(result.value.report_url, '_blank')
-    if (!w) throw new Error('blocked')
-  } catch (e) {
-    ElMessage.warning('浏览器会拦截从网页跳转的 file:// 本地链接，请用「复制路径」后粘贴到地址栏打开')
-  }
+const scheduleAutoAnalyze = () => {
+  if (!result.value && !submitting.value) return
+  clearTimeout(autoTimer)
+  autoTimer = setTimeout(() => submitAnalyze(), 400)
 }
 
-const copyReportPath = async () => {
-  const url = result.value?.report_url
-  if (!url) return
-  try {
-    await navigator.clipboard.writeText(url)
-    ElMessage.success('报告路径已复制，粘贴到浏览器地址栏即可打开')
-  } catch (e) {
-    ElMessage.warning('复制失败，请手动选择报告路径复制')
+const validateSignal = (s) => {
+  if (s.mode === 'klineform') {
+    const name = s.fnKey === '__custom__' ? s.customName.trim() : s.fnKey
+    if (!name) return '存在未选择函数或未填函数名的信号'
+    if (s.fnKey !== '__custom__') {
+      const miss = userParams(s).filter(p => {
+        const v = s.formParams[p.name]
+        if (p.required) return v === undefined || v === null || v === ''
+        if (isComplexParam(p)) return v === undefined || v === null || v === ''
+        return false
+      })
+      if (miss.length) {
+        const hint = miss.some(isComplexParam) ? '（复合参数请填逗号分隔，如 6,12,24）' : ''
+        return `信号「${name}」缺少必填参数：${miss.map(p => p.name).join('、')}${hint}`
+      }
+    }
+  } else if (!s.pythonCode.trim()) {
+    return '存在未填 pythonCode 的信号'
   }
+  if (!s.symbol?.code) return '存在未填标的代码的信号'
+  return null
 }
 
-const submitEvaluation = () => {
-  if (signals.value.length === 0) {
-    ElMessage.warning('请先添加评测信号')
+const submitAnalyze = async () => {
+  if (!signals.value.length) {
+    ElMessage.warning('请先添加信号')
     return
   }
-  // 校验每条信号
   for (const s of signals.value) {
-    if (!s.datetime) {
-      ElMessage.warning('存在未设置时间的信号，请补充完整')
-      return
-    }
-    if (!s.price || s.price <= 0) {
-      ElMessage.warning('存在未设置价格或价格非法的信号，请补充完整')
+    const err = validateSignal(s)
+    if (err) {
+      ElMessage.warning(err)
       return
     }
   }
+  if (!range.value || range.value.length !== 2) {
+    ElMessage.warning('请选择观察期起止时间')
+    return
+  }
 
-  // 构造请求体
-  // 评测基准周期固定为日线：信号按 {datetime, price} 逐日回放（与后端 viz.report 的
-  // curve_freq='D' 一致）；若用周/月线回测，日级信号将无法匹配 K 线日期而全部错失
   const payload = {
-    action: 'signalQualityEvaluate',
-    symbol: searchStore.symbol,
-    period: '1d',
-    adjust_type: searchStore.adjust_type,
-    signals: signals.value.map(s => ({
-      direction: s.direction,           // long=做多(买入) / short=做空(卖出)
-      datetime: s.datetime,             // YYYY-MM-DD HH:mm:ss
-      price: s.price,                   // 信号触发价格
-      note: s.note || '',               // 可选备注
-    })),
-    t: new Date().getTime(),
+    signals: signals.value.map(s => {
+      if (s.mode === 'klineform') {
+        const name = s.fnKey === '__custom__' ? s.customName.trim() : s.fnKey
+        const item = s.fnKey === '__custom__' ? null : fnMap[s.fnKey]
+        const args = s.fnKey === '__custom__' ? parseArgs(s.argsText) : buildArgs(s)
+        return {
+          displayName: item ? `${item.info}（${item.method}）` : name,
+          symbol: { ...s.symbol },
+          name,
+          args,
+        }
+      }
+      return {
+        displayName: '自定义 pythonCode',
+        symbol: { ...s.symbol },
+        pythonCode: s.pythonCode,
+      }
+    }),
+    range: { start: range.value[0], end: range.value[1] },
+    horizons: horizons.value.length ? [...horizons.value] : HORIZON_OPTIONS,
+    mergeConsecutive: mergeConsecutive.value,
+    returnType: returnType.value,
+    minSample: minSample.value,
+    period: period.value,
   }
 
   submitting.value = true
-  result.value = null
-  const ws = new WebSocket(ws_signalQualityEvaluate_url)
-  ws.onopen = () => {
-    ws.send(JSON.stringify(payload))
-    ElMessage.success(`已提交 ${signals.value.length} 条信号，后台开始评测`)
-  }
-  ws.onmessage = (event) => {
-    // 后台评测完成：展示报告 URL 与指标摘要；失败则提示原因
-    try {
-      const res = JSON.parse(event.data)
-      if (res.code === 0 && res.data) {
-        result.value = res.data
-        ElMessage.success('评测完成，报告已生成')
-      } else if (res.error) {
-        ElMessage.error('评测失败：' + res.error)
-      }
-    } catch (e) { /* ignore */ }
-    submitting.value = false
-    ws.close()
-  }
-  ws.onerror = () => {
-    ElMessage.error('提交失败：无法连接后台评测服务，请确认后台已启动')
-    submitting.value = false
-    ws.close()
-  }
-  ws.onclose = () => {
+  try {
+    const res = await signalAnalyze(payload)
+    if (res.code === 0 && res.data) {
+      result.value = res.data
+      errors.value = res.data.errors || []
+      nextTick(() => {
+        applyMainMarkers()
+      })
+    } else {
+      throw new Error(res.error || '返回格式异常')
+    }
+  } catch (e) {
+    ElMessage.error('分析失败：' + (e.message || e))
+  } finally {
     submitting.value = false
   }
 }
+
+// ---------- 表格取值 ----------
+function cell(sig, n, key) {
+  const h = sig?.horizons?.[String(n)]
+  if (!h) return null
+  if (h.insufficient) return '样本不足'
+  switch (key) {
+    case 'count': return h.count
+    case 'win': return returnType.value === 'log' ? h.winRateLog : h.winRateSimple
+    case 'ret': return returnType.value === 'log' ? h.avgReturnLog : h.avgReturnSimple
+    case 'avgWin': return h.avgWin
+    case 'avgLoss': return h.avgLoss
+    case 'dd': return h.maxDrawdown?.avg
+    case 'vol': return h.volatility?.pooled
+    default: return null
+  }
+}
+const retCls = (v) => {
+  if (typeof v !== 'number') return ''
+  return v >= 0 ? 'pos' : 'neg'
+}
+const pct = (v) => {
+  if (v === null || v === undefined) return '-'
+  if (typeof v === 'string') return v
+  return `${(v * 100).toFixed(2)}%`
+}
+const plr = (sig, n) => {
+  const h = sig?.horizons?.[String(n)]
+  if (!h || h.insufficient) return '-'
+  if (h.profitLossRatio === null) return '∞'
+  if (typeof h.profitLossRatio !== 'number') return '-'
+  return h.profitLossRatio.toFixed(2)
+}
+const ratio = (sig, n, key) => {
+  const h = sig?.horizons?.[String(n)]
+  if (!h || h.insufficient) return '-'
+  const v = h[key]
+  if (v === null || v === undefined) return '-'
+  return Number(v).toFixed(2)
+}
+
+// ---------- 主图信号标记（叠加到主页 K 线图） ----------
+function applyMainMarkers() {
+  const comp = props.chartRef
+  const chart = comp?.chart
+  if (!chart) return
+  try {
+    comp.clearAllMarkers(chart)
+    const markers = []
+    ;(result.value?.signals || []).forEach(s => {
+      ;(s.markers || []).forEach(m => {
+        markers.push({
+          timestamp: m.timestamp,
+          value: m.value,
+          type: 'B',
+          mes: s.displayName,
+        })
+      })
+    })
+    if (markers.length) comp.addMarkers(chart, markers, 'stock')
+  } catch (e) {
+    console.warn('主图信号标记失败:', e)
+  }
+}
+
+// ---------- 柱状图 / 分布图：已移至 SignalQualityDialog.vue（可拖拽缩放弹窗） ----------
+
+onMounted(() => {
+  loadIndicators()
+  if (!signals.value.length) addSignal()
+})
+
+onBeforeUnmount(() => {
+  clearTimeout(autoTimer)
+})
 </script>
 
 <style scoped>
-.sq-panel {
-  padding: 4px 8px;
+.sa-panel {
+  height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
+  min-width: 0;
 }
-.sq-meta {
+.sa-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 2px;
+}
+.sa-head-left {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-  padding: 10px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.15);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
 }
-.meta-tag {
-  font-variant-numeric: tabular-nums;
+.sa-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
 }
-.meta-desc {
-  font-size: 12px;
-  color: #64748b;
-  margin-left: 4px;
-}
-.sq-toolbar {
+.meta-tag { font-variant-numeric: tabular-nums; }
+
+.sa-body {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  gap: 8px;
+  gap: 10px;
 }
-.sq-list {
+
+/* 左列：配置 */
+.sa-left {
+  width: 300px;
+  flex: none;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 46vh;
-  overflow-y: auto;
-  padding-right: 2px;
+  padding-right: 4px;
 }
-.sq-row {
+.sa-section {
   border: 1px solid rgba(148, 163, 184, 0.15);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   background: rgba(255, 255, 255, 0.02);
+  flex: none;
 }
-.sq-row-head {
+.sa-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.sa-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.sa-list { display: flex; flex-direction: column; gap: 8px; }
+.sa-signal {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(15, 20, 30, 0.35);
+}
+.sa-signal-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.sa-index { font-size: 11px; color: #64748b; }
+.sa-del { margin-left: auto; }
+
+.sa-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.sa-field:last-child { margin-bottom: 0; }
+.sa-label {
+  font-size: 11px;
+  color: #64748b;
+  flex: none;
+  width: 34px;
+  text-align: right;
+}
+.sa-label-sm { width: auto; }
+.req { color: #f56c6c; margin-left: 2px; }
+.sa-input { flex: 1; min-width: 0; }
+.sa-fn-select { flex: 1; min-width: 0; }
+.doc-icon { color: #64748b; flex: none; }
+.sa-noparam { font-size: 11px; color: #64748b; padding: 2px 0 2px 40px; }
+.sa-symbol {
+  margin-top: 6px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.12);
+  padding-top: 6px;
+}
+.sa-params { display: flex; flex-direction: column; gap: 8px; }
+.sa-params .sa-label { width: auto; min-width: 34px; }
+
+.sa-submit-btn { flex: none; width: 100%; }
+
+/* 右列：结果 */
+.sa-right {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sa-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #64748b;
+  font-size: 13px;
+  border: 1px dashed rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+}
+.ph-icon { font-size: 34px; }
+
+.sa-errors { display: flex; flex-direction: column; gap: 4px; }
+.sa-error {
+  font-size: 12px;
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  word-break: break-all;
+}
+.sa-chart-block, .sa-table-block {
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(59, 130, 246, 0.05);
+}
+.sa-sub-head {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
 }
-.sq-index {
-  font-size: 11px;
-  color: #64748b;
-}
-.sq-direction {
-  font-weight: 600;
-}
-.sq-delete {
-  margin-left: auto;
-}
-.sq-row-body {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.sq-datetime {
-  width: 190px;
-}
-.sq-price {
-  width: 130px;
-}
-.sq-note {
-  flex: 1;
-  min-width: 140px;
-}
-.sq-footer {
-  padding-top: 6px;
-  border-top: 1px solid rgba(148, 163, 184, 0.12);
-}
-.sq-submit {
-  width: 100%;
-  background: linear-gradient(135deg, #3b82f6, #6366f1);
-  border: none;
-  font-weight: 600;
-}
+.sa-sub-title { font-size: 13px; font-weight: 600; color: #93c5fd; margin-right: auto; }
+.sa-mainmarker p { font-size: 12px; color: #cbd5e1; margin: 4px 0; line-height: 1.6; }
+.sig-meta { display: inline-block; margin-right: 12px; font-variant-numeric: tabular-nums; }
+.sa-chart-foot { font-size: 11px; color: #64748b; margin-top: 6px; }
+.sa-echart { height: 220px; width: 100%; }
 
-/* 评测结果卡片 */
-.sq-result {
-  border: 1px solid rgba(59, 130, 246, 0.28);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: rgba(59, 130, 246, 0.06);
-}
-.sq-result-head {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-.sq-result-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #93c5fd;
-  margin-right: auto;
-}
-.sq-report-path {
+.sa-table-scroll { overflow-x: auto; }
+.sa-table {
+  width: 100%;
+  border-collapse: collapse;
   font-size: 11px;
-  color: #64748b;
-  background: rgba(15, 20, 30, 0.6);
-  border-radius: 5px;
-  padding: 6px 8px;
-  margin-bottom: 10px;
-  word-break: break-all;
-  font-family: Consolas, Menlo, monospace;
-}
-.sq-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 6px 12px;
-  margin-bottom: 10px;
-}
-.sq-metric-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding: 5px 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 5px;
-}
-.sq-metric-label {
-  font-size: 11px;
-  color: #64748b;
-}
-.sq-metric-value {
-  font-size: 13px;
-  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  min-width: 420px;
 }
-.sq-metric-value.pos {
-  color: #ef4444;
+.sa-table th, .sa-table td {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  padding: 4px 6px;
+  text-align: center;
+  color: #cbd5e1;
 }
-.sq-metric-value.neg {
-  color: #22c55e;
-}
-.sq-signal-stats {
+.sa-table thead th { background: rgba(59, 130, 246, 0.08); color: #93c5fd; font-weight: 600; }
+.sa-table .th-sig { border-left: 2px solid rgba(59, 130, 246, 0.3); }
+.sa-table .td-n { font-weight: 600; color: #e2e8f0; }
+.sa-table tbody td.pos { color: #f87171; }
+.sa-table tbody td.neg { color: #34d399; }
+.sa-note { font-size: 11px; color: #64748b; margin-top: 6px; }
+
+/* 打开可视化窗口入口 */
+.sa-dialog-entry {
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 10px;
+  padding: 16px 14px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.14), rgba(59, 130, 246, 0.04));
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 8px;
 }
-.sq-ss-label {
-  font-size: 11px;
-  color: #64748b;
-  margin-right: 2px;
+.sa-open-btn { width: 100%; }
+.sa-dialog-tip { font-size: 11px; color: #64748b; margin: 0; }
+.sa-code-wrap { position: relative; }
+.sa-comp-pop {
+  position: absolute; left: 8px; min-width: 200px; max-height: 200px; overflow-y: auto;
+  background: #162032; border: 1px solid #2b3a55; border-radius: 4px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.5); z-index: 2000;
 }
-.sq-warning {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #f59e0b;
-}
+.sa-comp-item { padding: 4px 10px; cursor: pointer; font-size: 12px; color: #cdd6e4; font-family: Consolas, monospace; }
+.sa-comp-item.active, .sa-comp-item:hover { background: #3b82f6; color: #fff; }
+.sa-comp-ns { color: #7dd3fc; margin-right: 2px; }
+.sa-comp-item.active .sa-comp-ns, .sa-comp-item:hover .sa-comp-ns { color: #fff; }
+.sa-comp-empty { padding: 6px 10px; font-size: 12px; color: #8899aa; }
 </style>

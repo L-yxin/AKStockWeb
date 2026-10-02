@@ -9,6 +9,8 @@ declare global {
   const 
   getPyIndicatorList: typeof import('./api/index.js')['
   const 
+  signalAnalyze: typeof import('./api/index.js')['
+  const 
   uploadCloudMetric: typeof import('./api/index.js')['
   const DEFAULT_PARAMS: typeof import('./config/indicatorDefaults.js').DEFAULT_PARAMS
   const EffectScope: typeof import('vue').EffectScope

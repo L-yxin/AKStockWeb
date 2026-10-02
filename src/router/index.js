@@ -4,8 +4,8 @@ const routes = [
   {
     path: '/',
     name: 'home',
-    component: () => import('../views/kLineView.vue')
-  }
+    component: () => import('../components/home.vue')
+  },
 ]
 
 const router = createRouter({

@@ -3,7 +3,7 @@
 
 <template>
   <div class="app">
-    <home/>
+    <router-view/>
   </div>
 </template>
 <style scoped>

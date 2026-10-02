@@ -100,6 +100,27 @@ async function fetchPyIndicatorJs(name, paramsStr, { code, period, adjust, data 
   return resp.text()
 }
 
+// ============================================================
+// K 线信号表现分析（替代原 akquant 信号质量评测）
+// ============================================================
+
+/**
+ * 提交 bool 信号序列做未来 N 根 K 线表现分析。
+ * @param {object} payload { signals, range, horizons, mergeConsecutive, returnType, minSample, period }
+ */
+async function signalAnalyze(payload) {
+  const resp = await fetch(`${base_http_url}/api/signalAnalyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.detail || `信号表现分析失败 (${resp.status})`)
+  }
+  return resp.json()
+}
+
 export {
   base_ws_url,
   base_http_url,
@@ -118,4 +139,6 @@ export {
   // Python 指标 REST
   getPyIndicatorList,
   fetchPyIndicatorJs,
+  // 信号表现分析 REST
+  signalAnalyze,
 }

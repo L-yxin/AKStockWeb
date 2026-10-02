@@ -128,7 +128,7 @@ akstock/
     │   └── panels/              # 功能面板（抽屉或侧栏挂载）
     │       ├── IndicatorPanel.vue        # K线技术指标管理（启用/主图/参数编辑）
     │       ├── LongShortIndicatorPanel.vue # 买卖提示指标（后端指标目录 + 参数配置 + 多空信号生成）
-    │       ├── SignalQualityPanel.vue     # 信号质量评测（手动/图表导入信号 → akquant 报告）
+    │       ├── SignalQualityPanel.vue     # 信号表现分析（bool 信号序列 → 未来 N 根 K 线指标）
     │       ├── SimulationPanel.vue        # 模拟交易（初始化/逐根交易/成交记录/绩效报告）
     │       └── CloudMetricPanel.vue       # 云指标查看（已上传列表 + ECharts 多折线）
     └── views/
@@ -187,14 +187,20 @@ akstock/
   后端 Signaltest 引擎生成多空信号
 - 信号存储到 `searchStore.longShortSignals`，供模拟交易"下一信号跳转"和当前柱信号提示使用
 
-### 4. 信号质量评测（`SignalQualityPanel.vue`）
+### 4. 信号表现分析（`SignalQualityPanel.vue`）
 
-- 手动添加信号（方向/时间/价格/备注），或从图表导入已加载的交易标记
-- 提交到后端 `WS /ws/signalQualityEvaluate`，后端 akquant 自动配对开平仓
-  （long→开多/平空，short→开空/平多，支持多空双向），回放行情生成评价报告
-- 报告文件名带时间戳：`report_<symbol>_<YYYYMMDD_HHMMSS>.html`，
-  返回 `file:///` URL，前端可直接点击在浏览器打开
-- 展示摘要指标：初始资金/最终权益/总收益率/最大回撤/交易次数/胜率/总盈亏
+- 定位：**信号质量分析，非回测**。输入 bool 信号序列（KLineForm 函数名 / pythonCode），
+  分析信号在未来 N 根 K 线（5/10/20/30/60/120）的收益/胜率/盈亏比/最大回撤/波动率，
+  以及风险调整比率（夏普/索提诺/卡玛）
+- 信号编辑器：多信号并排（KLineForm 函数 + args / pythonCode 自定义），每信号独立标的
+  （代码/复权/起止）；KLineForm 数组参数自动注入，Config 参数支持 `"6,12,24"` 形式
+- 提交到后端 `POST /api/signalAnalyze`（REST）：观察期过滤信号、`mergeConsecutive` 合并连续、
+  简单/对数收益双套计算、`minSample` 样本不足标记；K 线与 bool 序列 LRU 缓存，
+  观察期滑块变化仅重算指标
+- 结果面板：**信号标记叠加到主页 K 线图（klinecharts `simpleAnnotation2`，红「买」标签+方向线，重新分析刷新）**、
+  多信号并排统计表格（样本/胜率/平均收益/平均盈利/平均亏损/盈亏比/回撤/波动率/夏普/索提诺/卡玛）、
+  指标柱状图（可切换指标）、分布图（回撤/波动率，echarts）
+- 原 WS `/ws/signalQualityEvaluate`（akquant 报告）已废弃，后端端点保留兼容
 
 ### 5. 模拟交易（`SimulationPanel.vue` + `simulationStore.js`）
 
@@ -337,7 +343,7 @@ base_http_url = "http://localhost:8000"
 | `/ws/getLongShortSignal` | 多空信号（Signaltest 引擎） | LongShortIndicatorPanel |
 | `/ws/getTradingSignals` | 交易记录标记（pybroker 订单） | home.vue |
 | `/ws/cloudMetrics` | 云指标（市场情绪，Sanguine.ipynb） | 预留（当前前端用 REST） |
-| `/ws/signalQualityEvaluate` | 信号质量评测（akquant 报告） | SignalQualityPanel |
+| `/ws/signalQualityEvaluate` | 信号质量评测（akquant 报告）【已废弃】 | 后端保留兼容，前端不再使用 |
 | `/ws/simulationEvaluate` | 模拟交易绩效评估（akquant 报告） | SimulationPanel |
 
 ### REST 端点
@@ -349,9 +355,10 @@ base_http_url = "http://localhost:8000"
 | GET | `/api/cloudMetrics/get` | 按起止时间查询云指标（多列时间序列） |
 | DELETE | `/api/cloudMetrics/delete` | 删除云指标 |
 | POST | `/api/trades_csv` | 上传交易记录 CSV（pybroker 订单） |
+| POST | `/api/signalAnalyze` | K 线信号表现分析（bool 信号 → 未来 N 根 K 线指标，SignalQualityPanel） |
 | GET | `/api/health` | 健康检查 |
 
-REST 封装函数：`uploadCloudMetric` / `listCloudMetrics` / `getCloudMetric` / `deleteCloudMetric`。
+REST 封装函数：`uploadCloudMetric` / `listCloudMetrics` / `getCloudMetric` / `deleteCloudMetric` / `signalAnalyze`。
 
 ---
 

@@ -4,7 +4,8 @@ import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import path from 'path'
-export default defineConfig({
+import monacoEditorPlugin from 'vite-plugin-monaco-editor'
+export default defineConfig({ 
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src')
@@ -12,7 +13,12 @@ export default defineConfig({
   },
   plugins: [
     vue(),
+      monacoEditorPlugin({
+      // 按需指定需要支持的 Worker 语言
+      languages: ['json', 'css', 'html', 'typescript','python'],
+    }),
     // 自动导入
+    
     AutoImport({
       resolvers: [
         // ✅ 关键：强制开启 el- 前缀

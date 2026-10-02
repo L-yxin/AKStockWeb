@@ -28,7 +28,7 @@
 
 ### 通用响应字段
 
-所有端点响应统一使用以下外壳（signalQualityEvaluate 见第 6 节专项定义）：
+所有端点响应统一使用以下外壳（`/api/signalAnalyze` 见第 6 节专项定义）：
 
 
 
@@ -70,7 +70,7 @@
 | `ws://…/getLongShortSignal`        | —  | 生成多空信号          | `src/components/panels/LongShortIndicatorPanel.vue` |
 | `ws://…/getTradingSignals`         | —  | pybroker 交易订单信号 | `src/components/home.vue`                           |
 | `ws://…/cloudMetrics`              | —  | 云指标数据           | `src/chart/indicators/cloudMetrics.js`              |
-| `ws://…/signalQualityEvaluate`     | —  | **信号质量评测（新增）**  | `src/components/panels/SignalQualityPanel.vue`      |
+| `POST /api/signalAnalyze` | REST | K 线信号表现分析（bool 信号 → 未来 N 根 K 线指标） | `src/components/panels/SignalQualityPanel.vue`      |
 | `GET /api/pyInd/list`               | REST | Python 指标清单 + talib 函数 | `src/components/panels/PythonIndicatorPanel.vue`    |
 | `GET /api/pyInd/{name}.js`          | REST | 计算 Python 指标（`data` 复合序列） | `src/chart/indicators/pyInd.js`                |
 
@@ -354,254 +354,129 @@
 
 ***
 
-## 6. 信号质量评测 `ws://…/signalQualityEvaluate`（新增）
+## 6. K 线信号表现分析 `POST /api/signalAnalyze`（替代原信号质量评测）
 
-> **定位**
->
-> ：前端只负责把 “买卖价格 + 时间” 的原始信号
->
-> **提交**
->
-> 给后台，由后台调用 
->
-> **akquant 自带的信号分析评价能力**
->
-> 完成质量评估。
-> **多空双向**
->
-> ：后台支持多头与空头双向评测，
->
-> **无需区分开仓 / 平仓**
->
-> ，信号即 “在某时间以某价格发生的方向性交易”。
-> **前端职责边界**
->
-> ：只负责提交与受理确认，不依赖、不解析后台的评测结果（结果由后台自行落库 / 输出）。
+> **定位**：信号质量分析，非回测。输入 **bool 信号序列**（KLineForm 函数名 / pythonCode），
+> 分析信号在未来 N 根 K 线（默认 5/10/20/30/60/120）的收益（简单/对数）、胜率、盈亏比、最大回撤、波动率，
+> 以及风险调整比率（夏普 / 索提诺 / 卡玛）。
+> 不处理开平仓 / 做空 / 手续费 / 滑点 / 资金曲线。
+> 原 WS `ws://…/signalQualityEvaluate`（akquant 报告链路）已废弃，后端端点保留兼容，前端不再使用。
 
 ### 6.1 请求（前端 → 后台）
 
+`POST http://localhost:8000/api/signalAnalyze`，JSON Body：
 
-
-```
+```json
 {
-
-&#x20; "action": "signalQualityEvaluate",
-
-&#x20; "symbol": "sh600000",
-
-&#x20; "period": "1d",
-
-&#x20; "adjust\_type": "none",
-
-&#x20; "signals": \[
-
-&#x20;   {
-
-&#x20;     "direction": "long",
-
-&#x20;     "datetime": "2026-08-01 09:35:00",
-
-&#x20;     "price": 10.25,
-
-&#x20;     "note": "RSI 超卖金叉"
-
-&#x20;   },
-
-&#x20;   {
-
-&#x20;     "direction": "short",
-
-&#x20;     "datetime": "2026-08-05",
-
-&#x20;     "price": 11.30,
-
-&#x20;     "note": ""
-
-&#x20;   }
-
-&#x20; ],
-
-&#x20; "t": 1757040000000
-
+  "signals": [
+    {
+      "name": "is_rsi_oversold",
+      "displayName": "is_rsi_oversold(6,12,24,30)",
+      "symbol": {"code": "000001.SZ", "adjust": "qfq", "start": "2019-01-01", "end": "2026-10-01"},
+      "args": ["6,12,24", 30]
+    },
+    {
+      "name": "custom",
+      "displayName": "自定义RSI",
+      "symbol": {"code": "000001.SZ", "adjust": "qfq", "start": "2019-01-01", "end": "2026-10-01"},
+      "pythonCode": "return ta.RSI(c, 9) < 30"
+    }
+  ],
+  "range": {"start": "2020-01-01", "end": "2025-01-01"},
+  "horizons": [5, 10, 20, 30, 60, 120],
+  "mergeConsecutive": false,
+  "returnType": "simple",
+  "minSample": 5,
+  "period": "1d"
 }
 ```
 
-#### 字段说明
-
-
-
-| 字段                    | 类型     | 必填 | 说明                                                              |
-| --------------------- | ------ | -- | --------------------------------------------------------------- |
-| `action`              | string | ✓  | 固定 `"signalQualityEvaluate"`                                    |
-| `symbol`              | string | ✓  | 标的代码（`sh`/`sz`/`bj` 前缀，与 K 线端点一致）                               |
-| `period`              | string | ✓  | 信号所在周期，`1d` / `60m` / `5m` …                                    |
-| `adjust_type`         | string | ✓  | `none` / `front` / `back`                                       |
-| `signals`             | array  | ✓  | 信号数组，长度 ≥ 1                                                     |
-| `signals[].direction` | string | ✓  | `"long"` = 做多（买入方向）；`"short"` = 做空（卖出方向）。后台据此方向配对 K 线评测         |
-| `signals[].datetime`  | string | ✓  | 信号时间。`YYYY-MM-DD` 或 `YYYY-MM-DD HH:mm:ss`；日线信号请统一给 `YYYY-MM-DD` |
-| `signals[].price`     | number | ✓  | 信号触发价格（> 0，浮点，前端最多 4 位小数）                                       |
-| `signals[].note`      | string | ✗  | 可选备注（信号来源 / 指标名等，默认空串）                                          |
-| `t`                   | number | ✗  | 请求时间戳（毫秒，防缓存 / 去重）                                              |
-
-> **评测口径（后台实现建议）**
->
-> ：后台收到后，用 
->
-> `symbol`
->
->  对应标的 + 
->
-> `period`
->
->  \+ 
->
-> `adjust_type`
->
->  拉取 K 线（数据来自通达信），将每条 
->
-> `(datetime, price, direction)`
->
->  与 K 线对齐：
-> `long`
->
-> ：按信号时间后的行情考察买入后的盈亏演化（如持有 N 根 K 线或到达下一个反向信号）；
-> `short`
->
-> ：方向相反；
-> **不关心开平仓配对**
->
-> ，每条信号独立评测后聚合统计。
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| signals[].name | string | KLineForm 函数名（后台在 `buy`/`sell` 命名空间查找） |
+| signals[].displayName | string | 可选；缺省为 `name(args)` 或 `custom` |
+| signals[].symbol | object | `{code, adjust, start, end}`；adjust ∈ `qfq/hfq/none` |
+| signals[].args | array | 非自动注入参数（按签名顺序）。Config 参数给字符串（如 `"6,12,24"` → RsiConfig）；bool 支持 `1/0/true/false/on/off/yes/no` |
+| signals[].pythonCode | string | 自定义函数体 `return bool序列`。预声明 `o/h/l/c/v/a` 与 `open_/open/high/low/close/volume/amount`；默认导入 `ta`（talib）、`ind`（Indicator）；超时 10s |
+| range | object | 观察期 `{start, end}`，独立于 symbol 起止；信号触发时间须落在其内 |
+| horizons | array | 未来 K 线节点数（正整数） |
+| mergeConsecutive | bool | true 时连续 true 只取组内第一根 |
+| returnType | string | `simple` / `log`；两套指标同时计算，前端可切换展示 |
+| minSample | int | 某 N 有效样本低于此值 → `insufficient: true`（默认 5） |
+| period | string | `1m/5m/15m/30m/1h/1d/1w/1M` |
 
 ### 6.2 响应（后台 → 前端）
 
-受理确认（后台应尽快返回，仅确认受理；前端收到即完成，不做后续处理）：
-
-
-
-```
+```json
 {
-
-&#x20; "code": 0,
-
-&#x20; "message": "ok",
-
-&#x20; "data": {
-
-&#x20;   "task\_id": "sqe\_20260905\_ab12cd34",
-
-&#x20;   "accepted": 2,
-
-&#x20;   "status": "accepted"
-
-&#x20; }
-
+  "code": 0,
+  "data": {
+    "range": {"start": "2020-01-01", "end": "2025-01-01"},
+    "horizons": [5, 10, 20],
+    "mergeConsecutive": false,
+    "returnType": "simple",
+    "minSample": 5,
+    "period": "1d",
+    "signals": [
+      {
+        "name": "is_rsi_oversold",
+        "displayName": "is_rsi_oversold(6,12,24,30)",
+        "symbol": {"code": "000001.SZ", "adjust": "qfq", "start": "...", "end": "..."},
+        "period": "1d",
+        "kline": [{"timestamp": 1546387200000, "open": 1.0, "high": 1.1, "low": 0.9, "close": 1.05, "volume": 1000}],
+        "markers": [{"timestamp": 1579737600000, "value": 2976.53}],
+        "signalCount": 168,
+        "timeSpan": "20 根 K 线（约 30.9天)",
+        "horizons": {
+          "5": {
+            "count": 168, "insufficient": false,
+            "winRateSimple": 0.589, "winRateLog": 0.581,
+            "avgReturnSimple": 0.0074, "avgReturnLog": 0.0071,
+            "avgWin": 0.0228, "avgLoss": -0.0146,
+            "profitLossRatio": 1.555,
+            "sharpe": 0.126, "sortino": 0.165, "calmar": 0.096,
+            "maxDrawdown": {"avg": 0.0154, "median": 0.0114, "max": 0.0772, "distribution": []},
+            "volatility": {"pooled": 0.0118, "avg": 0.012, "median": 0.01, "max": 0.03, "distribution": []}
+          }
+        }
+      }
+    ],
+    "errors": [{"name": "xxx", "displayName": "xxx", "error": "KLineForm 中未找到函数: xxx"}]
+  }
 }
 ```
 
-
-
-| 字段         | 说明                                       |
-| ---------- | ---------------------------------------- |
-| `task_id`  | 后台评测任务 ID（用于后台日志 / 落库关联）                 |
-| `accepted` | 实际受理的信号条数                                |
-| `status`   | `"accepted"` 受理中 / `"done"` 已完成（如后台同步完成） |
+| 字段 | 说明 |
+|---|---|
+| signals[].kline | 该信号标的的 K 线数组（timestamp epoch 毫秒，Asia/Shanghai），供前端渲染主图 |
+| signals[].markers | 观察期内信号触发点 `{timestamp, value}`（value=信号日收盘价），供主图打标记 |
+| signals[].signalCount | 观察期内有效信号数 |
+| signals[].timeSpan | 某 N 有效窗口实际时间跨度均值（如 `20 根 K 线（约 30.9天)`） |
+| signals[].horizons[N].count | 有效样本数（含 0 收益样本） |
+| signals[].horizons[N].insufficient | 有效样本 < minSample |
+| winRate* / avgReturn* / avgWin / avgLoss | 胜率 / 平均收益 / 平均盈利 / 平均亏损（Simple 与 Log 各一套） |
+| profitLossRatio | 盈亏比；`null` = 无亏损（前端显示 ∞） |
+| sharpe / sortino / calmar | 夏普 / 索提诺 / 卡玛（simple 口径）：夏普=池化日收益均值/标准差（n-1）；索提诺=均值/下行标准差；卡玛=N 期平均收益/最大回撤；分母 0 → `null`（前端显示 `-`，全涨无回撤时卡玛为 null） |
+| maxDrawdown | `{avg, median, max, distribution}`，**回撤幅度（正数 0~1）**，窗口内 `max(dd[1:])`（排除信号日自身 t=0 恒 0） |
+| volatility | `{pooled, avg, median, max, distribution}`，日收益率样本标准差（n-1，不年化） |
+| errors | 无效信号列表（单条信号失败不影响其他信号） |
 
 ### 6.3 错误码
 
+| HTTP | 场景 |
+|---|---|
+| 200 | 正常（含部分信号无效，见 `errors`） |
+| 400 | 参数错误：缺少 signals / range 起止颠倒 / 非法参数 |
+| 500 | 后端计算异常 |
 
+### 6.4 缓存与交互
 
-| code    | message             | 场景                            |
-| ------- | ------------------- | ----------------------------- |
-| `0`     | ok                  | 受理成功                          |
-| `40001` | invalid symbol      | 标的不存在或格式错误                    |
-| `40002` | invalid period      | 周期不合法                         |
-| `40003` | invalid signal list | 信号数组为空或结构非法                   |
-| `40004` | invalid direction   | `direction` 不是 `long`/`short` |
-| `40005` | invalid price       | 价格缺失或 ≤ 0                     |
-| `50000` | internal error      | 后台内部错误                        |
-
-错误响应示例：
-
-
-
-```
-{ "code": 40003, "message": "invalid signal list", "data": null }
-```
-
-### 6.4 评测结果数据结构（后台输出建议，供后续展示 / 落库）
-
-后台完成评测后，建议按如下结构落库或经其他通道回传（前端本轮不消费，作为契约预留）：
-
-
-
-```
-{
-
-&#x20; "task\_id": "sqe\_20260905\_ab12cd34",
-
-&#x20; "symbol": "sh600000",
-
-&#x20; "period": "1d",
-
-&#x20; "evaluated": 2,
-
-&#x20; "summary": {
-
-&#x20;   "total\_signals": 2,
-
-&#x20;   "win\_rate": 0.5,
-
-&#x20;   "profit\_factor": 1.35,
-
-&#x20;   "avg\_return\_pct": 2.1,
-
-&#x20;   "max\_drawdown\_pct": 3.8,
-
-&#x20;   "expectancy\_pct": 1.05,
-
-&#x20;   "sharpe": 0.9
-
-&#x20; },
-
-&#x20; "items": \[
-
-&#x20;   {
-
-&#x20;     "direction": "long",
-
-&#x20;     "datetime": "2026-08-01",
-
-&#x20;     "price": 10.25,
-
-&#x20;     "result": "win",
-
-&#x20;     "return\_pct": 3.2,
-
-&#x20;     "exit\_datetime": "2026-08-05",
-
-&#x20;     "exit\_price": 10.58
-
-&#x20;   }
-
-&#x20; ]
-
-}
-```
-
-> 字段仅为推荐口径（对齐 akquant 分析输出），后台可按实际分析维度增减，但
->
-> **保持外层&#x20;**
->
-> `code/message/data`
->
-> **&#x20;与受理响应的字段命名一致**
->
-> 。
-
-
+- K 线按 `code|period|adjust|start|end` LRU 缓存（32 条）；bool 序列按信号指纹 LRU 缓存（128 条）。
+- **观察期滑块变化 → 前端重新请求 → 后端复用缓存 K 线与 bool 序列，仅重新过滤与重算**。
+- 前端面板：`src/components/panels/SignalQualityPanel.vue`（信号编辑器 + 主图信号标记 + 统计表格 + 柱状图 + 分布图）。
+- 图表：**K 线主图用 klinecharts（`simpleAnnotation2` overlay 打标记，分析完成即叠加到主页 K 线图，重新分析刷新全部标记）**；柱状图/分布图用 echarts。
 
 ***
-
 ## 7. Python 指标（pyInd）REST API
 
 > **定位**：Indicator 目录的指标依赖 Python 生态（TALib / Numba / torch），浏览器无法直接计算。
@@ -732,3 +607,5 @@ a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL
 | 2026-09-26 | 复合类型完善：数据参数值下拉合并"基本数据列 + 前序步骤"（跨编辑区），值编码 `col:列名` / `var:全局变量下标`；后端 `_resolve_data_expr` 支持共享 env，多数据参数按签名顺序共享变量（后序可引用前序编辑区步骤）；变量命名跨编辑区全局连续（a/b/c…d/e/f…） |
 | 2026-09-26 | 字符串参数支持：`signature` 增加 `str` 类型（如 t_pivot_r 的 style）；`_parse_params` 原样接收字符串；表达式支持字符串字面量 `'xxx'`/`"xxx"`；前端参数表单与步骤编辑器支持 string 类型 |
 | 2026-09-27 | 文档与 UI：指标下拉选中区只显示 `doc` 描述（可搜索）、下拉面板显示"名称—完整描述"（多行）；新增"详细文档"只读框（`doc02` 完整 __doc__） |
+| 2026-10-02 | 信号质量评测 → K 线信号表现分析：新增 `POST /api/signalAnalyze`（REST）——输入 bool 信号序列（KLineForm 函数 / pythonCode），分析未来 N 根 K 线（5/10/20/30/60/120）收益/胜率/盈亏比/回撤/波动率；观察期滑块变化后端复用缓存仅重算；`SignalQualityPanel.vue` 改为信号编辑器 + K 线主图标记 + 统计表格 + 柱状图 + 分布图；原 WS `signalQualityEvaluate` 废弃保留兼容 |
+| 2026-10-02 | signalAnalyze 完善：修复最大回撤恒 0 bug（回撤改正数幅度，排除信号日自身）；新增夏普/索提诺/卡玛三比率（分母 0 → null）；面板移除内嵌 K 线图，信号标记叠加到主页 K 线图（红「买」标签+方向线），统计表/柱状图新增三比率 |
