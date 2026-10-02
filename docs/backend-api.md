@@ -73,6 +73,9 @@
 | `POST /api/signalAnalyze` | REST | K 线信号表现分析（bool 信号 → 未来 N 根 K 线指标） | `src/components/panels/SignalQualityPanel.vue`      |
 | `GET /api/pyInd/list`               | REST | Python 指标清单 + talib 函数 | `src/components/panels/PythonIndicatorPanel.vue`    |
 | `GET /api/pyInd/{name}.js`          | REST | 计算 Python 指标（`data` 复合序列） | `src/chart/indicators/pyInd.js`                |
+| `GET /api/pyCodeCompletions`        | REST | Monaco 编辑器补全名单（ta/ind/klf） | `src/components/QuantEditor.vue` |
+| `GET /api/pyCodeDoc?ns=&name=`       | REST | Monaco hover 文档（签名+docstring） | `src/components/QuantEditor.vue` |
+| `GET /api/cloudMetrics/get?name=&start=&end=` | REST | 云指标折线数据（多列不同颜色） | `src/chart/indicators/cloudMetrics.js` |
 
 
 
@@ -476,6 +479,21 @@
 - 前端面板：`src/components/panels/SignalQualityPanel.vue`（信号编辑器 + 主图信号标记 + 统计表格 + 柱状图 + 分布图）。
 - 图表：**K 线主图用 klinecharts（`simpleAnnotation2` overlay 打标记，分析完成即叠加到主页 K 线图，重新分析刷新全部标记）**；柱状图/分布图用 echarts。
 
+### 6.5 Monaco 编辑器（pythonCode 输入）
+
+信号编辑器内置 Monaco Editor（`src/components/QuantEditor.vue`），支持 Python 语法高亮、ta/ind/klf 智能补全与 hover 文档。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /api/pyCodeCompletions` | 返回 `{code:0, data:{ta:[...], ind:[...], klf:[...]}}`。`ta` 为 talib 函数名，`ind` 为 Indicator 目录函数，`klf` 为 KLineForm 信号（`buy.xxx`/`sell.xxx`）。启动时 fetch 一次 |
+| `GET /api/pyCodeDoc?ns=ta&name=RSI` | 返回 `{code:0, data:{ns, name, signature, doc}}`。`signature` 为函数签名，`doc` 为 docstring（markdown 格式）。Monaco hover provider 鼠标悬浮时调用 |
+
+**pythonCode 执行环境**（后端 `signal_analyzer.py::_gen_pycode_signal`）：
+- 预声明变量：`o/h/l/c/v/a`（简称）与 `open_/high/low/close/volume/amount`（全名）
+- 默认导入：`numpy as np`、`talib as ta`、`Indicator as ind`、`KLineForm as klf`
+- **开发模式热重载**：每次执行前 `importlib.reload(ind)` 与 `importlib.reload(klf)`，改 `.py` 文件不用重启 FastAPI（numba @njit 首次 reload 重新 JIT 编译，后续命中缓存）
+- 用户代码写法：函数体形式，`return ta.RSI(c, 9) < 30`
+
 ***
 ## 7. Python 指标（pyInd）REST API
 
@@ -609,3 +627,6 @@ a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL
 | 2026-09-27 | 文档与 UI：指标下拉选中区只显示 `doc` 描述（可搜索）、下拉面板显示"名称—完整描述"（多行）；新增"详细文档"只读框（`doc02` 完整 __doc__） |
 | 2026-10-02 | 信号质量评测 → K 线信号表现分析：新增 `POST /api/signalAnalyze`（REST）——输入 bool 信号序列（KLineForm 函数 / pythonCode），分析未来 N 根 K 线（5/10/20/30/60/120）收益/胜率/盈亏比/回撤/波动率；观察期滑块变化后端复用缓存仅重算；`SignalQualityPanel.vue` 改为信号编辑器 + K 线主图标记 + 统计表格 + 柱状图 + 分布图；原 WS `signalQualityEvaluate` 废弃保留兼容 |
 | 2026-10-02 | signalAnalyze 完善：修复最大回撤恒 0 bug（回撤改正数幅度，排除信号日自身）；新增夏普/索提诺/卡玛三比率（分母 0 → null）；面板移除内嵌 K 线图，信号标记叠加到主页 K 线图（红「买」标签+方向线），统计表/柱状图新增三比率 |
+| 2026-10-02 | KLineForm 信号函数返回值统一为 bool ndarray：删除 ManagerBoolean 包装类与 `__original_return_value__` 属性；talib K 线形态函数（吞没/孕线/晨星/黄昏星等）内部直接 `== 100` / `== -100` 返回 bool；装饰器 `manager_boolean` 仅做参数校验 + integer→bool 转换；新增 `platform_box_breakout`（平台箱体上沿突破）信号 |
+| 2026-10-02 | 后端热重载：`signal_analyzer.py` 四处加 `importlib.reload`（pythonCode 执行 / KLineForm 函数查找 / 补全名单 / hover 文档），改 Indicator/KLineForm 的 .py 文件不用重启 FastAPI；numba @njit 首次 reload 重新 JIT 编译 |
+| 2026-10-02 | Monaco Editor 集成：`QuantEditor.vue` 静态 import monaco，启动时 fetch `/api/pyCodeCompletions` 获取 ta/ind/klf 补全名单，hover provider fetch `/api/pyCodeDoc` 返回签名+docstring；`CodeEditorDialog.vue` 为可拖拽/可缩放弹窗 |
