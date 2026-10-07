@@ -304,6 +304,8 @@ const fnGroups = computed(() => [
 const isAutoInjectedParam = (name, annotation) => {
   const autoNames = ['open_', 'high', 'low', 'close', 'volume', 'open', 'high', 'low', 'close', 'volume']
   if (autoNames.includes(name)) return true
+  // FNxxxx 财务字段自动注入
+  if (/^FN\d+$/.test(name)) return true
   if (annotation && annotation.includes('ndarray')) {
     return autoNames.some(n => name.toLowerCase().includes(n))
   }

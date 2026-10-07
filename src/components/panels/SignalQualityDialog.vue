@@ -25,6 +25,17 @@
           </div>
 
           <template v-if="result?.signals?.length">
+            <!-- 详细信息 -->
+            <div class="saq-meta">
+              <span class="saq-meta-item">代码：<b>{{ result.signals[0]?.symbol?.code || '-' }}</b></span>
+              <span class="saq-meta-item">复权：<b>{{ result.signals[0]?.symbol?.adjust || '-' }}</b></span>
+              <span class="saq-meta-item">周期：<b>{{ result.period || '-' }}</b></span>
+              <span class="saq-meta-item">K线范围：<b>{{ result.signals[0]?.symbol?.start || '-' }} ~ {{ result.signals[0]?.symbol?.end || '-' }}</b></span>
+              <span class="saq-meta-item">观察期：<b>{{ result.range?.start || '-' }} ~ {{ result.range?.end || '-' }}</b></span>
+              <span class="saq-meta-item">连续True合并：<b>{{ result.mergeConsecutive ? '是' : '否' }}</b></span>
+              <span class="saq-meta-item">minSample：<b>{{ result.minSample ?? 5 }}</b></span>
+            </div>
+
             <!-- 统计表格 -->
             <div class="saq-block">
               <div class="saq-sub-head">
@@ -485,6 +496,18 @@ onBeforeUnmount(() => {
   padding: 6px 8px;
   word-break: break-all;
 }
+.saq-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.06);
+  border-radius: 6px;
+}
+.saq-meta-item b { color: #e2e8f0; font-weight: 600; }
 .saq-block {
   border: 1px solid rgba(59, 130, 246, 0.22);
   border-radius: 8px;
