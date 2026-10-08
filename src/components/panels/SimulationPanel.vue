@@ -202,7 +202,7 @@ import { CaretTop, CaretBottom } from '@element-plus/icons-vue'
 import { ws_simulationEvaluate_url } from '@/api'
 
 const props = defineProps({
-  chartRef: { type: Object, required: true },
+  chartRef: { type: [Object, null], required: true },
 })
 defineEmits(['close'])
 

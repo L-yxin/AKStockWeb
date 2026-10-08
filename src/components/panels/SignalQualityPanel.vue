@@ -205,7 +205,7 @@ import SignalQualityDialog from './SignalQualityDialog.vue'
 import CodeEditorDialog from './CodeEditorDialog.vue'
 
 const props = defineProps({
-  chartRef: { type: Object, required: true },
+  chartRef: { type: [Object, null], required: true },
 })
 defineEmits(['close'])
 

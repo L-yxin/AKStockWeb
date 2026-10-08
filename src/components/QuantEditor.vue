@@ -26,8 +26,11 @@ const emit = defineEmits<{
 }>()
 
 // ============================================================
-// 补全数据：ta / ind / klf 动态名单（启动时从后端拉取）
+// 命名空间补全数据（ta / ind / klf）
 // ============================================================
+type Ns = 'ta' | 'ind' | 'klf'
+const NSS: readonly Ns[] = ['ta', 'ind', 'klf']
+
 interface CompletionDef {
   label: string
   kind: monaco.languages.CompletionItemKind
@@ -37,13 +40,16 @@ interface CompletionDef {
 }
 
 const K = monaco.languages.CompletionItemKind
-const nsMap: Record<string, CompletionDef[]> = { ta: [], ind: [], klf: [] }
+const nsMap: Record<Ns, CompletionDef[]> = { ta: [], ind: [], klf: [] }
 
-async function loadNsCompletions() {
-  try {
-    const j = await getPyCodeCompletions()
-    if (j.code === 0 && j.data) {
-      for (const ns of ['ta', 'ind', 'klf'] as const) {
+let nsLoadPromise: Promise<void> | null = null
+function ensureNsCompletions(): Promise<void> {
+  if (nsLoadPromise) return nsLoadPromise
+  nsLoadPromise = (async () => {
+    try {
+      const j = await getPyCodeCompletions()
+      if (j.code !== 0 || !j.data) throw new Error('bad response')
+      for (const ns of NSS) {
         nsMap[ns] = (j.data[ns] || []).map((name: string) => ({
           label: name,
           kind: K.Function,
@@ -51,13 +57,40 @@ async function loadNsCompletions() {
           boost: 60,
         }))
       }
+    } catch {
+      nsLoadPromise = null // 允许下次重试
     }
-  } catch { /* ignore */ }
+  })()
+  return nsLoadPromise
 }
 
 // ============================================================
-// 补全 Provider
+// 工具：解析 `ta.` / `ind.` / `klf.` 上下文
+//  - ns:          命名空间
+//  - prefix:      `ns.` 之后、光标之前已输入的文本（可能含 `.`）
+//  - startColumn: 补全/hover 的替换起点（1-based）
 // ============================================================
+interface NsContext {
+  ns: Ns
+  prefix: string
+  startColumn: number
+}
+
+function parseNsContext(
+  model: monaco.editor.ITextModel,
+  position: monaco.Position
+): NsContext | null {
+  const line = model.getLineContent(position.lineNumber)
+  const before = line.slice(0, position.column - 1)
+  // 前面必须是行首或 非标识符/非点，避免误匹配 `foo.ta.x`
+  const m = before.match(/(?:^|[^\w.])(ta|ind|klf)\.([\w.]*)$/)
+  if (!m) return null
+  const ns = m[1] as Ns
+  const prefix = m[2] ?? ''
+  const startColumn = before.length - prefix.length + 1
+  return { ns, prefix, startColumn }
+}
+
 function toSuggestion(
   def: CompletionDef,
   range: monaco.IRange
@@ -72,75 +105,103 @@ function toSuggestion(
   }
 }
 
-function registerCompletion(): monaco.IDisposable {
-  return monaco.languages.registerCompletionItemProvider('python', {
+// ============================================================
+// 补全 Provider（全局只注册一次）
+// ============================================================
+let completionDispose: monaco.IDisposable | null = null
+
+function registerCompletion(): void {
+  if (completionDispose) return
+  completionDispose = monaco.languages.registerCompletionItemProvider('python', {
     triggerCharacters: ['.'],
 
-    provideCompletionItems(model, position) {
-      const word = model.getWordUntilPosition(position)
+    async provideCompletionItems(model, position) {
+      const ctx = parseNsContext(model, position)
+      if (!ctx) return { suggestions: [] }
+
+      await ensureNsCompletions()
+      const items = nsMap[ctx.ns]
+      if (!items.length) return { suggestions: [] }
+
+      // 替换范围：从 `ns.` 之后到光标
       const range: monaco.IRange = {
         startLineNumber: position.lineNumber,
         endLineNumber: position.lineNumber,
-        startColumn: word.startColumn,
-        endColumn: word.endColumn,
+        startColumn: ctx.startColumn,
+        endColumn: position.column,
       }
 
-      const lineContent = model.getLineContent(position.lineNumber)
-      const beforeCursor = lineContent.slice(0, position.column - 1)
+      // 前端先按前缀粗筛，减少返回量；Monaco 会再做二次模糊过滤
+      const filtered = ctx.prefix
+        ? items.filter((d) => d.label.startsWith(ctx.prefix))
+        : items
 
-      // ta. / ind. / klf. 前缀 → 对应命名空间函数名单
-      const nsMatch = beforeCursor.match(/(ta|ind|klf)\.[A-Za-z_]*$/)
-      if (!nsMatch) return { suggestions: [] }
-
-      const items = nsMap[nsMatch[1]] || []
-      return { suggestions: items.map((def) => toSuggestion(def, range)) }
+      return { suggestions: filtered.map((d) => toSuggestion(d, range)) }
     },
   })
 }
 
 // ============================================================
-// Hover Provider（ta/ind/klf 函数签名 + docstring）
+// Hover Provider
 // ============================================================
-const docCache: Record<string, string> = {}
-async function fetchDoc(ns: string, name: string): Promise<string> {
+const docCache = new Map<string, Promise<string>>()
+
+function fetchDoc(ns: string, name: string): Promise<string> {
   const key = `${ns}.${name}`
-  if (docCache[key] !== undefined) return docCache[key]
-  try {
-    const j = await getPyCodeDoc(ns, name)
-    if (j.code === 0 && j.data) {
-      const { signature, doc } = j.data
-      const sigLine = `\`${ns}.${name}${signature}\``
-      let md = `### ${ns}.${name}\n\n${sigLine}`
-      if (doc) md += `\n\n---\n\n${doc}`
-      docCache[key] = md
-      return md
+  const cached = docCache.get(key)
+  if (cached) return cached
+
+  const p = (async () => {
+    try {
+      const j = await getPyCodeDoc(ns, name)
+      if (j.code === 0 && j.data) {
+        const { signature, doc } = j.data
+        const sigLine = `\`${ns}.${name}${signature}\``
+        let md = `### ${ns}.${name}\n\n${sigLine}`
+        if (doc) md += `\n\n---\n\n${doc}`
+        return md
+      }
+    } catch {
+      /* ignore */
     }
-  } catch { /* ignore */ }
-  docCache[key] = ''
-  return ''
+    return ''
+  })()
+
+  docCache.set(key, p)
+  // 空结果不缓存，允许网络恢复后重试
+  p.then((md) => {
+    if (!md) docCache.delete(key)
+  })
+  return p
 }
 
-function registerHover(): monaco.IDisposable {
-  return monaco.languages.registerHoverProvider('python', {
+let hoverDispose: monaco.IDisposable | null = null
+
+function registerHover(): void {
+  if (hoverDispose) return
+  hoverDispose = monaco.languages.registerHoverProvider('python', {
     provideHover(model, position) {
-      const word = model.getWordUntilPosition(position)
-      const lineContent = model.getLineContent(position.lineNumber)
-      const before = lineContent.slice(0, word.startColumn - 1)
-      const m = before.match(/(ta|ind|klf)\.([A-Za-z_.]*)$/)
-      if (!m) return null
-      const ns = m[1]
-      let fnName = word.word
-      if (ns === 'klf' && m[2].includes('.')) {
-        fnName = `${m[2].split('.')[0]}.${word.word}`
-      }
-      const range = {
+      const ctx = parseNsContext(model, position)
+      if (!ctx) return null
+
+      // 光标可能在符号中间：向后再读一段标识符
+      const line = model.getLineContent(position.lineNumber)
+      const after = line.slice(position.column - 1)
+      const tail = (after.match(/^[\w.]*/) ?? [''])[0]
+
+      // 完整符号名，去掉尾部多余的点
+      const fullName = (ctx.prefix + tail).replace(/\.+$/, '')
+      if (!fullName) return null
+
+      const range: monaco.IRange = {
         startLineNumber: position.lineNumber,
         endLineNumber: position.lineNumber,
-        startColumn: word.startColumn,
-        endColumn: word.endColumn,
+        startColumn: ctx.startColumn,
+        endColumn: position.column + tail.length,
       }
+
       return (async () => {
-        const md = await fetchDoc(ns, fnName)
+        const md = await fetchDoc(ctx.ns, fullName)
         if (!md) return null
         return { range, contents: [{ value: md }] }
       })()
@@ -153,13 +214,15 @@ function registerHover(): monaco.IDisposable {
 // ============================================================
 const editorContainer = ref<HTMLElement>()
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
-let completionDispose: monaco.IDisposable | null = null
-let hoverDispose: monaco.IDisposable | null = null
 let contentDispose: monaco.IDisposable | null = null
+let isSettingValue = false // 防止 setValue 触发 emit 回环
 
 onMounted(() => {
   if (!editorContainer.value) return
-  loadNsCompletions()
+
+  // Provider 是全局的，注册一次即可
+  registerCompletion()
+  registerHover()
 
   editor = monaco.editor.create(editorContainer.value, {
     value: props.modelValue,
@@ -170,6 +233,10 @@ onMounted(() => {
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
     tabSize: 4,
+    padding: { top: 8, bottom: 8 },
+    smoothScrolling: true,
+    cursorBlinking: 'smooth',
+    renderWhitespace: 'selection',
     quickSuggestions: { other: true, comments: false, strings: false },
     suggestOnTriggerCharacters: true,
     tabCompletion: 'on',
@@ -177,22 +244,38 @@ onMounted(() => {
     suggestSelection: 'first',
     wordBasedSuggestions: 'currentDocument',
     hover: { above: false, delay: 100 },
+    // 关键：让 hover / 补全浮层不被容器 overflow 裁剪
+    fixedOverflowWidgets: true,
+    scrollbar: {
+      verticalScrollbarSize: 10,
+      horizontalScrollbarSize: 10,
+    },
   })
-
-  completionDispose = registerCompletion()
-  hoverDispose = registerHover()
 
   contentDispose = editor.onDidChangeModelContent(() => {
+    if (isSettingValue) return
     emit('update:modelValue', editor!.getValue())
   })
+
+  // 预热补全名单
+  ensureNsCompletions()
 })
 
 watch(
   () => props.modelValue,
   (val) => {
-    if (editor && editor.getValue() !== val) {
-      editor.setValue(val)
-    }
+    if (!editor || editor.getValue() === val) return
+
+    // 保存光标/选区，setValue 后恢复（否则光标会跳到末尾）
+    const pos = editor.getPosition()
+    const sel = editor.getSelection()
+
+    isSettingValue = true
+    editor.setValue(val)
+    isSettingValue = false
+
+    if (pos) editor.setPosition(pos)
+    if (sel) editor.setSelection(sel)
   }
 )
 
@@ -203,12 +286,23 @@ watch(
   }
 )
 
+watch(
+  () => props.language,
+  (lang) => {
+    const model = editor?.getModel()
+    if (model) monaco.editor.setModelLanguage(model, lang)
+  }
+)
+
 onBeforeUnmount(() => {
   contentDispose?.dispose()
-  completionDispose?.dispose()
-  hoverDispose?.dispose()
+  contentDispose = null
   editor?.dispose()
   editor = null
+  // Provider 是全局的，保留注册（避免多实例 / HMR 场景下反复叠加）
+  // 若确定应用只在一处使用并要彻底释放，可在此：
+  // completionDispose?.dispose(); completionDispose = null
+  // hoverDispose?.dispose();     hoverDispose = null
 })
 </script>
 
