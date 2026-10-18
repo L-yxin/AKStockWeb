@@ -342,7 +342,7 @@ onBeforeUnmount(() => {
   padding: 2px 6px !important;
   border-radius: 3px !important;
   font-family: 'Consolas', monospace !important;
-}
+} 
 .monaco-editor-hover .markdown-docs h3 {
   color: #fff !important;
   margin: 0 0 8px 0 !important;

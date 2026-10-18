@@ -16,7 +16,7 @@
           </div>
         </template>
         <div class="menubar-spacer" />
-        <div class="menubar-status">数据源：通达信后台</div>
+        <div class="menubar-status">{{ dataSourceLabel }}</div>
       </div>
 
       <!-- K线主区域 + 右侧固定面板（模拟交易 / 信号表现分析，不弹抽屉） -->
@@ -39,25 +39,33 @@
     class="app-drawer">
     <indicator-panel v-if="activeMenu === 'K_lineTechnicalIndicators'" :chart-ref="klineRef"
       :preset-enabled="INITIAL_ENABLED_INDICATORS" />
-    <long-short-indicator-panel v-else-if="activeMenu === 'buyingAndSellingIndicator'" :chart-ref="klineRef" />
     <cloud-metric-panel v-else-if="activeMenu === 'cloudMetricUpload'" />
     <python-indicator-panel v-else-if="activeMenu === 'pythonIndicator'" :chart-ref="klineRef" />
+    <sector-panel v-else-if="activeMenu === 'sectorPanel'" />
   </el-drawer>
+
+  <!-- 买卖提示指标：可拖拽弹窗 -->
+  <long-short-indicator-panel v-if="lsPanelVisible" :chart-ref="klineRef" @close="lsPanelVisible = false" />
 </template>
 
 <script setup>
-import { TrendCharts, Bell, Download, DataAnalysis, Coin, Cpu } from '@element-plus/icons-vue'
+import { TrendCharts, Bell, Download, DataAnalysis, Coin, Cpu, Grid, Setting } from '@element-plus/icons-vue'
 import { ws_getTradingSignals_url } from '@/api'
 import { INITIAL_ENABLED_INDICATORS } from '@/config/indicatorDefaults'
 import { applyUrlParams } from '@/urlParams'
+import { useRouter } from 'vue-router'
 
 const searchStore = useSearchParametersStore()
+const router = useRouter()
 
 // ---------- 菜单配置（抽离，新增菜单项只改这里） ----------
 const MENUS = [
+  
+  { key: 'settings', label: '设置', icon: Setting, action: 'settings' },
+  { sep: true },
   { key: 'K_lineTechnicalIndicators', label: 'K线技术指标', icon: TrendCharts, action: 'drawer' },
   { sep: true },
-  { key: 'buyingAndSellingIndicator', label: '买卖提示指标', icon: Bell, action: 'drawer' },
+  { key: 'buyingAndSellingIndicator', label: '买卖提示指标', icon: Bell, action: 'lsDialog' },
   { sep: true },
   { key: 'loadTrades', label: '加载pybroker订单', icon: Download, action: 'loadTrades' },
   { sep: true },
@@ -68,14 +76,21 @@ const MENUS = [
   { key: 'cloudMetricUpload', label: '云指标', icon: TrendCharts, action: 'drawer' },
   { sep: true },
   { key: 'pythonIndicator', label: 'Python指标', icon: Cpu, action: 'drawer' },
+  { sep: true },
+  { key: 'sectorPanel', label: '板块', icon: Grid, action: 'drawer' },
+  
 ]
 
 const drawerVisible = ref(false)
 const activeMenu = ref('')
 const klineRef = ref(null)
 
+// 数据源状态栏文案
+const dataSourceLabel = computed(() => (searchStore.dataSource === 'cache' ? '数据源：内存缓存' : '数据源：通达信后台'))
+
 const simPanelVisible = ref(false)
 const saPanelVisible = ref(false)
+const lsPanelVisible = ref(false)
 
 const activeMenuLabel = computed(() => {
   const m = MENUS.find(x => x.key === activeMenu.value)
@@ -87,9 +102,15 @@ const notifyChartResize = () => {
 }
 
 const handleMenu = (item) => {
+  if (item.action === 'settings') {
+    router.push('/settings')
+    return
+  }
   if (item.action === 'drawer') {
     activeMenu.value = item.key
     drawerVisible.value = true
+  } else if (item.action === 'lsDialog') {
+    lsPanelVisible.value = !lsPanelVisible.value
   } else if (item.action === 'loadTrades') {
     loadGetTradingSignals()
   } else if (item.action === 'simPanel') {
@@ -138,7 +159,7 @@ const loadGetTradingSignals = () => {
         return
       }
 
-      klineRef.value?.clearAllMarkers(chart)
+      klineRef.value?.clearAllMarkers(chart, 'trades')
 
       const markers = []
       for (const signal of data.configs) {
@@ -149,7 +170,7 @@ const loadGetTradingSignals = () => {
         markers.push({ timestamp, value, type, mes })
       }
 
-      klineRef.value?.addMarkers(chart, markers, 'stock')
+      klineRef.value?.addMarkers(chart, markers, 'stock', 'trades')
       ElMessage.success(`成功加载 ${markers.length} 个交易信号`)
     } catch (e) {
       console.error('处理交易信号失败:', e)

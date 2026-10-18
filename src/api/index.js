@@ -10,6 +10,9 @@ const ws_kline_url = `${base_ws_url}/kline`
 // —— 标的列表 ——
 const ws_allSymbols_url = `${base_ws_url}/allSymbols`
 
+// —— 键盘搜索标的（A股+重点指数，全量下发） ——
+const ws_searchSymbols_url = `${base_ws_url}/searchSymbols`
+
 // —— 买卖提示指标（后台指标目录） ——
 const ws_buyingAndSellingIndicator_url = `${base_ws_url}/buyingAndSellingIndicator`
 
@@ -139,11 +142,174 @@ async function getPyCodeDoc(ns, name) {
   return resp.json()
 }
 
+// ============================================================
+// 板块 / 指数成分 / 自选（REST）
+// ============================================================
+
+/** 分组列表：type ∈ sector | index | watchlist */
+async function getSectorGroups(type) {
+  const resp = await fetch(`${base_http_url}/api/sectors/list?type=${type}`)
+  if (!resp.ok) throw new Error(`分组获取失败 (${resp.status})`)
+  return resp.json()
+}
+
+/** 成分股列表：type ∈ sector | index | watchlist，id 为分组 id */
+async function getSectorStocks(type, id) {
+  const resp = await fetch(`${base_http_url}/api/sectors/stocks?type=${type}&id=${encodeURIComponent(id)}`)
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.detail || `成分股获取失败 (${resp.status})`)
+  }
+  return resp.json()
+}
+
+/** 自选操作：action ∈ create / add / remove / rename / delete */
+async function watchlistOp(action, body = {}) {
+  const resp = await fetch(`${base_http_url}/api/sectors/watchlist`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...body }),
+  })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.detail || `自选操作失败 (${resp.status})`)
+  }
+  return resp.json()
+}
+
+/** 全部自选组（含明细） */
+async function getWatchlist() {
+  const resp = await fetch(`${base_http_url}/api/sectors/watchlist`)
+  if (!resp.ok) throw new Error(`自选获取失败 (${resp.status})`)
+  return resp.json()
+}
+
+// ============================================================
+// 股票数据内存缓存服务（回测数据源 / 网页可选数据来源）
+// ============================================================
+
+/** 缓存状态：entries / used_gb / budget_gb / utilization / ttl */
+async function getCacheStats() {
+  const resp = await fetch(`${base_http_url}/api/v1/cache/stats`)
+  if (!resp.ok) throw new Error(`缓存状态获取失败 (${resp.status})`)
+  return resp.json()
+}
+
+/** 清空全部缓存 */
+async function clearCache() {
+  const resp = await fetch(`${base_http_url}/api/v1/cache`, { method: "DELETE" })
+  if (!resp.ok) throw new Error(`清空缓存失败 (${resp.status})`)
+  return resp.json()
+}
+
+/** 失效单标的缓存（所有复权/周期版本） */
+async function evictCacheSymbol(symbol) {
+  const resp = await fetch(`${base_http_url}/api/v1/cache/${encodeURIComponent(symbol)}`, { method: "DELETE" })
+  if (!resp.ok) throw new Error(`失效缓存失败 (${resp.status})`)
+  return resp.json()
+}
+
+/** 单标的 K 线（缓存服务，懒加载） */
+async function getCachedKline(symbol, { adjust = "qfq", period = "1d", start = "", end = "", columns } = {}) {
+  const params = new URLSearchParams({ adjust, period })
+  if (start) params.set("start", start)
+  if (end) params.set("end", end)
+  if (columns) params.set("columns", columns)
+  const resp = await fetch(`${base_http_url}/api/v1/stocks/${encodeURIComponent(symbol)}?${params.toString()}`)
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.detail || `缓存K线获取失败 (${resp.status})`)
+  }
+  return resp.json()
+}
+
+// ============================================================
+// 后台管理（/api/admin：数据预加载 + 缓存策略调整）
+// ============================================================
+
+/** 预加载计划预览（基于 data 下 sector_cache.json / watchlist.json） */
+async function getPreloadPlan(sources = ["watchlist", "sector", "index"]) {
+  const resp = await fetch(`${base_http_url}/api/admin/preload/plan?sources=${sources.join(",")}`)
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.detail || `预加载计划获取失败 (${resp.status})`)
+  }
+  return resp.json()
+}
+
+/** 预加载分组清单（精确勾选：自选组 / 板块 / 指数，含数量） */
+async function getPreloadSources() {
+  const resp = await fetch(`${base_http_url}/api/admin/preload/sources`)
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.detail || `预加载分组清单获取失败 (${resp.status})`)
+  }
+  return resp.json()
+}
+
+/** 执行数据预加载：groups 为精确组 id（wl_* / sector_stocks:* / index_stocks:*）；兼容 sources 粗粒度 */
+async function runPreload({ groups, sources = ["watchlist", "sector", "index"], period = "1d", adjust = "none", start = "2024-01-01", end = "", limit } = {}) {
+  const body = groups ? { groups, period, adjust, start, end, limit } : { sources, period, adjust, start, end, limit }
+  const resp = await fetch(`${base_http_url}/api/admin/preload`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.detail || `数据预加载失败 (${resp.status})`)
+  }
+  return resp.json()
+}
+
+/** 读取后台管理配置（data/setting.json：预加载选择 + 缓存策略） */
+async function getAdminSettings() {
+  const resp = await fetch(`${base_http_url}/api/admin/settings`)
+  if (!resp.ok) throw new Error(`后台管理配置读取失败 (${resp.status})`)
+  return resp.json()
+}
+
+/** 保存后台管理配置（含缓存策略时同步应用） */
+async function saveAdminSettings(body = {}) {
+  const resp = await fetch(`${base_http_url}/api/admin/settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.detail || `后台管理配置保存失败 (${resp.status})`)
+  }
+  return resp.json()
+}
+
+/** 读取缓存策略 */
+async function getCacheConfig() {
+  const resp = await fetch(`${base_http_url}/api/admin/cache/config`)
+  if (!resp.ok) throw new Error(`缓存策略读取失败 (${resp.status})`)
+  return resp.json()
+}
+
+/** 调整缓存策略：{ budget_gb, ttl_seconds, sweep_interval_seconds } */
+async function setCacheConfig(body = {}) {
+  const resp = await fetch(`${base_http_url}/api/admin/cache/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.detail || `缓存策略调整失败 (${resp.status})`)
+  }
+  return resp.json()
+}
+
 export {
   base_ws_url,
   base_http_url,
   ws_kline_url,
   ws_allSymbols_url,
+  ws_searchSymbols_url,
   ws_buyingAndSellingIndicator_url,
   ws_getLongShortSignal_url,
   ws_getTradingSignals_url,
@@ -162,4 +328,22 @@ export {
   // Monaco 编辑器 REST
   getPyCodeCompletions,
   getPyCodeDoc,
+  // 板块/自选 REST
+  getSectorGroups,
+  getSectorStocks,
+  watchlistOp,
+  getWatchlist,
+  // 股票数据内存缓存服务 REST
+  getCacheStats,
+  clearCache,
+  evictCacheSymbol,
+  getCachedKline,
+  // 后台管理 REST
+  getPreloadPlan,
+  getPreloadSources,
+  runPreload,
+  getCacheConfig,
+  setCacheConfig,
+  getAdminSettings,
+  saveAdminSettings,
 }

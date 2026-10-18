@@ -79,9 +79,9 @@
       <!-- 信号提示（当前柱：买卖提示指标已启用指标返回值） -->
       <div v-if="simStore.currentSignals.length" class="signal-alert">
         <div v-for="(sig, i) in simStore.currentSignals" :key="i"
-          class="signal-line" :class="sig.type === 'buy' ? 'sig-buy' : 'sig-sell'">
-          <el-icon><CaretTop v-if="sig.type === 'buy'" /><CaretBottom v-else /></el-icon>
-          <span>{{ sig.type === 'buy' ? '买入信号' : '卖出信号' }}：{{ sig.message || '该柱出现信号' }}</span>
+          class="signal-line" :class="sig.type === 'buy' ? 'sig-buy' : (sig.type === 'sell' ? 'sig-sell' : 'sig-neutral')">
+          <el-icon><CaretTop v-if="sig.type === 'buy'" /><CaretBottom v-else-if="sig.type === 'sell'" /><Minus v-else /></el-icon>
+          <span>{{ sig.type === 'buy' ? '买入信号' : (sig.type === 'sell' ? '卖出信号' : '中性信号') }}：{{ sig.message || '该柱出现信号' }}</span>
         </div>
       </div>
 
@@ -198,7 +198,7 @@
 </template>
 
 <script setup>
-import { CaretTop, CaretBottom } from '@element-plus/icons-vue'
+import { CaretTop, CaretBottom, Minus } from '@element-plus/icons-vue'
 import { ws_simulationEvaluate_url } from '@/api'
 
 const props = defineProps({
@@ -259,8 +259,8 @@ const startSim = () => {
   })
   if (!ret.ok) return ElMessage.error(ret.msg)
 
-  // 模拟交易期间独占标记区（避免与其他来源标记叠加），开始前清空一次
-  props.chartRef?.clearAllMarkers(chart)
+  // 模拟交易期间仅清理模拟交易自己的标记组（不影响买卖提示 / pybroker 订单）
+  props.chartRef?.clearAllMarkers(chart, 'sim')
   // 视图定位到起始柱（延迟到遮挡 overlay 布局稳定后，避免被其异步重排覆盖）
   setTimeout(() => {
     simStore.withRangeSyncSuppressed(() => chart.scrollToDataIndex(simStore.cursorIndex, 0))
@@ -326,13 +326,13 @@ const doTrade = (side) => {
   renderTradeMarkers()
 }
 
-// 交易记录展示到K线（模拟期间独占标记区，全量重放避免重复）
+// 交易记录展示到K线（仅清理/重放模拟交易自己的标记组）
 const renderTradeMarkers = () => {
   const chart = getChart()
   if (!chart) return
   const configs = simStore.getMarkerConfigs()
-  props.chartRef?.clearAllMarkers(chart)
-  if (configs.length) props.chartRef?.addMarkers(chart, configs, 'futures')
+  props.chartRef?.clearAllMarkers(chart, 'sim')
+  if (configs.length) props.chartRef?.addMarkers(chart, configs, 'futures', 'sim')
 }
 
 // ---------- 结束模拟 ----------
@@ -528,6 +528,7 @@ onUnmounted(() => {
 }
 .sig-buy { color: #f87171; }
 .sig-sell { color: #60a5fa; }
+.sig-neutral { color: #fbbf24; }
 .trade-zone {
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 8px;

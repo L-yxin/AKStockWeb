@@ -236,7 +236,9 @@ const defaultSymbol = () => ({
 })
 
 // ---------- 指标目录（后端 WS /ws/buyingAndSellingIndicator） ----------
-const cat = reactive({ buy: [], sell: [] })
+// 收录 klf 目录下全部 @manager_boolean 包装的信号函数：
+//   buy（买入）/ sell（卖出）/ neutral（中性）/ packages（子包级，"模块.函数" 约定）
+const cat = reactive({ buy: [], sell: [], neutral: [], packages: [] })
 const fnMap = reactive({}) // method -> item
 
 const loadIndicators = () => {
@@ -251,11 +253,13 @@ const loadIndicators = () => {
       const sellRaw = JSON.parse(data.sell)
       cat.buy = convertToArray(buyRaw)
       cat.sell = convertToArray(sellRaw)
+      if (data.neutral) cat.neutral = convertToArray(JSON.parse(data.neutral))
+      if (Array.isArray(data.packages)) cat.packages = data.packages
     } catch (e) {
       console.error('信号表现分析：指标目录解析失败', e)
       return
     }
-    ;[...cat.buy, ...cat.sell].forEach(it => { fnMap[it.method] = it })
+    ;[...cat.buy, ...cat.sell, ...cat.neutral, ...cat.packages].forEach(it => { fnMap[it.method] = it })
     // 目录就绪后，为已有信号补齐定义与默认参数
     // - 刚添加未手动修改的默认信号（fnKey='__custom__' 且未填自定义名）→ 自动切到目录首选函数
     // - 已选目录函数但定义缺失 → 补齐 itemDef/formParams
@@ -295,10 +299,21 @@ const convertToArray = (rawObj) => {
   }))
 }
 
-const fnGroups = computed(() => [
-  { label: `买入指标（${cat.buy.length}）`, options: cat.buy.map(it => ({ value: it.method, label: `${it.info}（${it.method}）` })) },
-  { label: `卖出指标（${cat.sell.length}）`, options: cat.sell.map(it => ({ value: it.method, label: `${it.info}（${it.method}）` })) },
-])
+const fnGroups = computed(() => {
+  // 包级指标按 type（包名）分组，如 StockSelectionStrategy
+  const pkgMap = {}
+  cat.packages.forEach(it => { (pkgMap[it.type] = pkgMap[it.type] || []).push(it) })
+  const pkgGroups = Object.entries(pkgMap).map(([typ, list]) => ({
+    label: `${typ}（${list.length}）`,
+    options: list.map(it => ({ value: it.method, label: `${it.info}（${it.method}）` })),
+  }))
+  return [
+    { label: `买入指标（${cat.buy.length}）`, options: cat.buy.map(it => ({ value: it.method, label: `${it.info}（${it.method}）` })) },
+    { label: `卖出指标（${cat.sell.length}）`, options: cat.sell.map(it => ({ value: it.method, label: `${it.info}（${it.method}）` })) },
+    { label: `中性指标（${cat.neutral.length}）`, options: cat.neutral.map(it => ({ value: it.method, label: `${it.info}（${it.method}）` })) },
+    ...pkgGroups,
+  ]
+})
 
 // ---------- 参数类型工具（与买卖提示面板一致） ----------
 const isAutoInjectedParam = (name, annotation) => {
@@ -596,7 +611,7 @@ function applyMainMarkers() {
   const chart = comp?.chart
   if (!chart) return
   try {
-    comp.clearAllMarkers(chart)
+    comp.clearAllMarkers(chart, 'sa')
     const markers = []
     ;(result.value?.signals || []).forEach(s => {
       ;(s.markers || []).forEach(m => {
@@ -608,7 +623,7 @@ function applyMainMarkers() {
         })
       })
     })
-    if (markers.length) comp.addMarkers(chart, markers, 'stock')
+    if (markers.length) comp.addMarkers(chart, markers, 'stock', 'sa')
   } catch (e) {
     console.warn('主图信号标记失败:', e)
   }

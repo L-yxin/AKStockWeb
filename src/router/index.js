@@ -6,6 +6,16 @@ const routes = [
     name: 'home',
     component: () => import('../components/home.vue')
   },
+  {
+    path: '/settings',
+    name: 'settings',
+    component: () => import('../components/Settings.vue')
+  },
+  {
+    path: '/admin',
+    name: 'admin',
+    component: () => import('../views/AdminPanel.vue')
+  },
 ]
 
 const router = createRouter({

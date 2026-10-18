@@ -116,6 +116,7 @@
 | `start_date`  | string | 起始日期 `YYYY-MM-DD`                             |
 | `end_date`    | string | 结束日期 `YYYY-MM-DD`                             |
 | `limit`       | number | 可选。非空时后端只返回该区间内时间最近的 N 根（升序），用于前端分页加载；缺省返回区间内全部 |
+| `source`      | string | 可选。数据来源：`tq` 通达信直拉（默认）/ `cache` 后端内存缓存服务；由设置页 `dataSource` 决定 |
 
 ### 3.2 响应（后台 → 前端）
 
@@ -364,6 +365,7 @@
 > 以及风险调整比率（夏普 / 索提诺 / 卡玛）。
 > 不处理开平仓 / 做空 / 手续费 / 滑点 / 资金曲线。
 > 原 WS `ws://…/signalQualityEvaluate`（akquant 报告链路）已废弃，后端端点保留兼容，前端不再使用。
+> **信号函数范围**：`name` 支持 klf 目录下全部 `@manager_boolean` 包装函数——buy/sell/neutral 根级（`name`=函数名，如 `is_rsi_oversold`）+ 子包级（`name`=`模块.函数`，如 `s01.is_limit_up_pullback`）；前端函数下拉按 买入/卖出/中性/包级（type）分组展示。
 
 ### 6.1 请求（前端 → 后台）
 
@@ -573,6 +575,23 @@ window.__pyInd = {
 - `data_expr`：实际使用的数据表达式（`data` 或默认列名）
 - 错误：`400`/`500`，`detail` 为原因
 
+**多线指标**（返回 `(线数, n)`，如 `platform_box` 上下沿）：输出 `lines` 数组替代 `data`：
+
+```js
+window.__pyInd = {
+  "name": "platform_box",
+  "multi": true,
+  "count": 666,
+  "lines": [
+    {"key": "line0", "title": "line0", "data": [{"timestamp": 1704124800000, "value": null}, {"timestamp": 1704211200000, "value": 11.32}]},
+    {"key": "line1", "title": "line1", "data": [{"timestamp": 1704124800000, "value": null}, {"timestamp": 1704211200000, "value": 10.35}]}
+  ]
+}
+```
+
+- 前端 `src/chart/indicators/pyInd.js` 按 `lines` 注册多条 figure（调色盘分色），主图/副图均可叠加
+- 复合表达式中引用多线指标：按行拆 tuple，`a=platform_box(...)` 默认取第一行，`a[1]` 取第二行（与 talib 多输出一致）
+
 ### 7.3 复合序列数据表达式（data 参数）语法
 
 前端分步编辑器把用户配置序列化为 `;` 分隔的分步表达式提交：
@@ -629,4 +648,13 @@ a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL
 | 2026-10-02 | signalAnalyze 完善：修复最大回撤恒 0 bug（回撤改正数幅度，排除信号日自身）；新增夏普/索提诺/卡玛三比率（分母 0 → null）；面板移除内嵌 K 线图，信号标记叠加到主页 K 线图（红「买」标签+方向线），统计表/柱状图新增三比率 |
 | 2026-10-02 | KLineForm 信号函数返回值统一为 bool ndarray：删除 ManagerBoolean 包装类与 `__original_return_value__` 属性；talib K 线形态函数（吞没/孕线/晨星/黄昏星等）内部直接 `== 100` / `== -100` 返回 bool；装饰器 `manager_boolean` 仅做参数校验 + integer→bool 转换；新增 `platform_box_breakout`（平台箱体上沿突破）信号 |
 | 2026-10-02 | 后端热重载：`signal_analyzer.py` 四处加 `importlib.reload`（pythonCode 执行 / KLineForm 函数查找 / 补全名单 / hover 文档），改 Indicator/KLineForm 的 .py 文件不用重启 FastAPI；numba @njit 首次 reload 重新 JIT 编译 |
+| 2026-10-10 | 股票数据内存缓存服务（webapi `stock_cache.py`）：新增 REST 端点 `/api/v1/stocks/{symbol}`（懒加载）、`/api/v1/stocks/batch`、`/api/v1/cache/warmup`、`/api/v1/cache/stats`、`DELETE /api/v1/cache/{symbol}`、`DELETE /api/v1/cache`、`/api/v1/health`；缓存键 `(symbol, period, adjust)`，TTL 30min、预算 10GiB（环境变量可配）、近似 LRU 逐出、后台 sweeper 兜底；`/ws/kline` 请求新增可选 `source`（`tq` 直拉默认 / `cache` 走缓存服务）；回测程序可先 warmup 再统一走缓存 API |
+| 2026-10-10 | 前端设置页：新增 `/settings` 路由（`Settings.vue`）——K 线数据来源切换（通达信直拉 / 内存缓存，store `dataSource` 默认 `tq`）、缓存状态卡片（entries/used_gb/利用率/TTL）、清空缓存按钮；home 菜单新增「设置」入口、状态栏动态显示当前数据源；`src/api/index.js` 新增缓存服务封装（`getCacheStats` / `clearCache` / `evictCacheSymbol` / `getCachedKline`） |
 | 2026-10-02 | Monaco Editor 集成：`QuantEditor.vue` 静态 import monaco，启动时 fetch `/api/pyCodeCompletions` 获取 ta/ind/klf 补全名单，hover provider fetch `/api/pyCodeDoc` 返回签名+docstring；`CodeEditorDialog.vue` 为可拖拽/可缩放弹窗 |
+| 2026-10-11 | 后台管理（webapi `admin_controller.py` + `/api/admin/*`）：**数据预加载**——基于 `webapi/data/` 下 `watchlist.json`（自选组）与 `sector_cache.json`（已缓存板块成分 `sector_stocks:*` / 指数成分 `index_stocks:*`）提取股票代码清单，`GET /api/admin/preload/plan` 返回去重统计 + 样例，`POST /api/admin/preload` 预热到内存缓存（复权/周期/区间/数量上限可配，返回成功/失败/耗时/最新 stats）；**缓存策略调整**——`stock_cache.py` 配置改为运行时可变（`set_config`），`GET/POST /api/admin/cache/config`（等价 `/api/v1/cache/config`）调整内存预算 / TTL / 清理扫描间隔，立即生效无需重启，调小预算同步逐出 |
+| 2026-10-11 | 前端后台管理页：`/admin` 路由（`AdminPanel.vue`）——数据预加载（来源勾选自选/板块/指数 + 计划统计样例 + 参数表单 + 执行结果）、缓存策略调整（预算/TTL/扫描间隔保存即生效）、缓存状态卡；`Settings.vue` 新增「后台管理」入口卡片跳转 `/admin`；`src/api/index.js` 新增 `getPreloadPlan` / `runPreload` / `getCacheConfig` / `setCacheConfig` |
+| 2026-10-11 | 后台管理增强：①**分组精确选择**——`GET /api/admin/preload/sources` 返回可勾选分组明细（自选组 `wl_*` / 板块 `sector_stocks:*` / 指数 `index_stocks:*`，组名映射自 `sector_list` 与 `INDEX_GROUPS`，含各组合计数）；`POST /api/admin/preload` 新增 `groups` 字段按组 id 精确提取（兼容原 `sources` 粗粒度）②**配置持久化**——`GET/POST /api/admin/settings` 读写 `webapi/data/setting.json`（预加载选择 + 缓存策略），保存时同步应用缓存策略；`main.py` lifespan 启动时自动恢复保存的缓存策略 ③**滚动修复**——`src/style.css` `body{overflow:hidden}`（K线全屏布局）导致长页面不可滚动，`Settings.vue` / `AdminPanel.vue` 根元素改 `height:100%; overflow-y:auto` 自行滚动 |
+| 2026-10-11 | **数据来源持久化**：设置页「数据来源」（通达信直拉 tq / 内存缓存 cache）选择保存到后端 `data/setting.json`（`GET/POST /api/admin/settings` 的 `dataSource` 字段，仅接受 tq/cache）；前端 `Settings.vue` 切换时异步 `saveAdminSettings({dataSource})`、打开页面时 `restoreDataSource()` 恢复；`App.vue` 启动时读取后端恢复数据源（早于 K 线首次加载），刷新页面不丢失选择 |
+| 2026-10-11 | **标记分组隔离**：买卖提示（`ls`）/ pybroker 订单（`trades`）/ 信号表现分析（`sa`）/ 模拟交易（`sim`）四类 K 线标记改用 klinecharts `groupId` 分组（`createOverlay({groupId})` + `removeOverlay({groupId})`），各功能开启/清除互不影响，相互独立开关；股票切换等全量场景仍全清（`clearAllMarkers` 不传组） |
+| 2026-10-11 | **热更新排除**：新增 `webapi/run_server.py` 启动脚本（`uvicorn.run(reload_excludes=[...])`），排除 `stockSelection / Strategy / test / use_packages / MarketSentiment / webapi/test` 目录的改动触发后端重载；规避命令行 `--reload-exclude "**"` 在 Windows 终端被通配符展开的报错 |
+| 2026-10-11 | **URL 双重编码兼容**：`src/urlParams.js` 新增幂等安全解码 `safeExtraDecode`（仅当串仍含 `%xx` 时再解一次，明文/单次编码 URL 不受影响），应用于 `parseIndicators` 与 `parseLsParam`——修复 URL 整段被二次编码（如 `%25E6...`、`%7C`）时中文指标名匹配不到、提示"目录中不存在"的问题；`tool/make_akstock_url.py` 本身为单次编码（正确），无需改动 |

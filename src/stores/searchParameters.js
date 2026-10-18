@@ -7,6 +7,11 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
   const startDate = ref(today.toISOString())
   const endDate = ref(new Date().toISOString())
   const adjust_type = ref("none") // none不复权、front前复权、back后复权
+  // K线数据来源：tq（通达信直拉，默认）| cache（后端内存缓存服务）
+  const dataSource = ref('tq')
+  const setDataSource = (src) => {
+    if (src === 'cache' || src === 'tq') dataSource.value = src
+  }
   // K线周期（klinecharts Period 结构：{type, span}，type ∈ minute/hour/day/week/month）
   const period = ref({ type: 'day', span: 1 })
   const setPeriod = (p) => {
@@ -49,6 +54,16 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
   const longShortSignals = ref([])
   const setLongShortSignals = (list) => {
     longShortSignals.value = Array.isArray(list) ? list : []
+  }
+
+  // 已启用的买卖提示指标配置（股票切换时自动重新计算）
+  // { configs: [{ method, type, info, params }], period: '1d'|'5m'|... }
+  const enabledLongShortIndicators = ref({ configs: [], period: '1d' })
+  const setEnabledLongShortIndicators = ({ configs = [], period = '1d' } = {}) => {
+    enabledLongShortIndicators.value = {
+      configs: Array.isArray(configs) ? configs : [],
+      period: period || '1d',
+    }
   }
 
   // 3. 核心：参数校验函数
@@ -108,6 +123,8 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
     startDate,
     endDate,
     adjust_type,
+    dataSource,
+    setDataSource,
     period,
     setPeriod,
     enabledIndicators,
@@ -116,6 +133,8 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
     setPythonIndicators,
     longShortSignals,
     setLongShortSignals,
+    enabledLongShortIndicators,
+    setEnabledLongShortIndicators,
     addOnLoadEvent,
     removeOnLoadEvent,
     onLoad,

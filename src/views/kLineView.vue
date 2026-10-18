@@ -13,19 +13,19 @@
       <div class="tooltip-header">{{ formatDateTime(currentKline.timestamp) }}</div>
       <div class="tooltip-row">
         <span class="label">开</span>
-        <span class="value" :class="klineChangeClass(currentKline.open, currentKline.preClose)">{{ currentKline.open }}</span>
+        <span class="value" :class="klineChangeClass(currentKline.open, currentKline.preClose)">{{ formatPrice(currentKline.open) }}</span>
       </div>
       <div class="tooltip-row">
         <span class="label">高</span>
-        <span class="value high-low">{{ currentKline.high }}</span>
+        <span class="value high-low">{{ formatPrice(currentKline.high) }}</span>
       </div>
       <div class="tooltip-row">
         <span class="label">低</span>
-        <span class="value high-low">{{ currentKline.low }}</span>
+        <span class="value high-low">{{ formatPrice(currentKline.low) }}</span>
       </div>
       <div class="tooltip-row">
         <span class="label">收</span>
-        <span class="value" :class="klineChangeClass(currentKline.close, currentKline.preClose)">{{ currentKline.close }}</span>
+        <span class="value" :class="klineChangeClass(currentKline.close, currentKline.preClose)">{{ formatPrice(currentKline.close) }}</span>
       </div>
       <div class="tooltip-row">
         <span class="label">量</span>
@@ -56,6 +56,7 @@ import '@/chart/overlays'
 
 // 标记逻辑与消息表
 import { mesMap, addMarkers, clearAllMarkers } from '@/chart/markers'
+import { requestLongShortSignals } from '@/chart/longShortSignals'
 // 云指标生命周期
 import { setCloudMetricsChartGetter, destroyCloudMetrics } from '@/chart/indicators/cloudMetrics'
 // Python 指标（Indicator 目录，后端计算）重放
@@ -64,7 +65,10 @@ import { applyPyIndicator } from '@/chart/indicators/pyInd'
 import { ws_kline_url } from '@/api'
 
 // ==================== Pinia Store ====================
+import { useSettingStore } from '@/stores/setting'
+
 const searchStore = useSearchParametersStore()
+const settingStore = useSettingStore()
 const simStore = useSimulationStore()
 
 // ==================== 响应式状态 ====================
@@ -225,7 +229,12 @@ const tooltipMessages = ref([]) // 当前日期对应的交易信号消息列表
 const tooltipPos = ref({ x: 0, y: 0 })
 const currentKline = ref(null)
 
-// ==================== 时间工具 ====================
+// ==================== 时间与价格工具 ====================
+// 价格显示精度：默认 2 位，设置页可调（跟随 settingStore.pricePrecision）
+function formatPrice(v) {
+  if (v == null || isNaN(v)) return '--'
+  return Number(v).toFixed(settingStore.pricePrecision)
+}
 // 后端序列化统一约定：通达信本地时间（无时区）→ 先按 Asia/Shanghai 解释再转 epoch（毫秒）。
 // 因此前端显示 Asia/Shanghai 时刻 = epoch + 8h 后的 UTC 字段；不依赖浏览器本地时区。
 const SHIFT_8H = 8 * 3600 * 1000
@@ -339,22 +348,41 @@ function switchPeriod(p) {
 }
 
 // ==================== 历史数据请求 ====================
+// 模块级请求序号：快速切换股票/周期时，旧请求返回直接丢弃，防止过期数据覆盖新图
+let klineReqSeq = 0
+const KLINE_REQ_TIMEOUT = 15000 // 单次 K 线请求超时（ms）；超时/连接异常必 settle，避免 await 永久挂起
 function fetchHistoryData(symbol, period, startDate, endDate, limit) {
+  const reqId = klineReqSeq // 捕获当前图表代次；仅 initChart 重建时递增
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(WS_URL)
+    let settled = false
+    // 超时保护：后端卡死/连接无响应时 15s 内必定结束本次请求
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try { ws.close() } catch (e) { /* ignore */ }
+      reject(new Error('K线请求超时'))
+    }, KLINE_REQ_TIMEOUT)
+    const finish = (fn, arg) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try { ws.close() } catch (e) { /* ignore */ }
+      fn(arg)
+    }
     const onMessage = (event) => {
       let res
       try {
         res = JSON.parse(event.data)
       } catch (e) {
         console.error('[kline] 数据解析失败:', e)
-        reject(e)
-        ws.close()
+        finish(reject, e)
         return
       }
+      // 过期请求：期间已切换标的/周期，结果作废（不 resolve、不污染新图）
+      if (reqId !== klineReqSeq) return
       const bars = (res.data || []).map(normalizeToKLineData).sort((a, b) => a.timestamp - b.timestamp)
-      resolve(bars)
-      ws.close()
+      finish(resolve, bars)
     }
     ws.onopen = () => {
       const payload = {
@@ -364,15 +392,16 @@ function fetchHistoryData(symbol, period, startDate, endDate, limit) {
         adjust_type: searchStore.adjust_type,
         start_date: startDate,
         end_date: endDate,
+        // 数据来源：tq（默认直拉）| cache（走后端内存缓存服务）
+        source: searchStore.dataSource,
       }
       if (limit) payload.limit = limit
       ws.send(JSON.stringify(payload))
     }
     ws.onmessage = onMessage
-    ws.onerror = (err) => {
-      reject(err)
-      ws.close()
-    }
+    ws.onerror = (err) => finish(reject, err)
+    // 服务端关闭/连接中断但未收到数据 → 必须结束 Promise，防止 getBars 永久挂起
+    ws.onclose = () => finish(reject, new Error('K线连接关闭'))
   })
 }
 
@@ -585,11 +614,15 @@ const initChart = () => {
   dispose('chart')
   chart.value = null
   currentLatestDate = null
+  // 图表代次 +1：使在途的旧标的/周期请求结果全部作废（见 fetchHistoryData reqId）
+  klineReqSeq++
 
   // v10 时间戳统一为毫秒，不再需要 timestampType；locale/timezone 走 init 选项
   chart.value = init('chart', {
     locale: 'zh-CN',
-    timezone: 'Asia/Shanghai'
+    timezone: 'Asia/Shanghai',
+    // 价格显示精度（价格轴刻度 / 内置 crosshair 文本等），默认 2 位，设置页可调
+    precision: settingStore.pricePrecision
   })
 
   chart.value.setStyles(getChartStyles())
@@ -756,7 +789,7 @@ const initChart = () => {
     const simConfigs = simStore.getMarkerConfigs()
     if (simConfigs.length) {
       try {
-        addMarkers(chart.value, simConfigs, 'futures')
+        addMarkers(chart.value, simConfigs, 'futures', 'sim')
       } catch (e) {
         console.warn('重放模拟交易标记失败:', e)
       }
@@ -774,14 +807,63 @@ const reloadKLineData = () => {
   initChart()
 }
 
+// 价格小数位数设置变更 → 重建图表（precision 为 init 选项，重建后价格轴/tooltip 即时生效）
+watch(() => settingStore.pricePrecision, () => {
+  reloadKLineData()
+})
+
+// ==================== 板块滚轮切换股票 ====================
+// 图表区：Ctrl/Shift/Alt + 滚轮 切换上一只/下一只（不干扰 K 线缩放）
+// 板块面板列表内：普通滚轮直接切换（见 SectorPanel）
+const sectorStore = useSectorStore()
+const switchSymbolBySector = (code) => {
+  if (!code || searchStore.symbol === code) return
+  searchStore.symbol = code
+  searchStore.onLoad()
+}
+// 滚轮切换消抖：一次滚动会连发多个 wheel 事件，0.5s 内只切换一次（取最后一次方向）
+let wheelSwitchTimer = null
+let wheelSwitchDir = 0
+function onChartWheel(e) {
+  if (!sectorStore.wheelEnabled) return
+  if (!(e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)) return
+  e.preventDefault()
+  wheelSwitchDir = e.deltaY > 0 ? 1 : -1
+  if (wheelSwitchTimer) clearTimeout(wheelSwitchTimer)
+  wheelSwitchTimer = setTimeout(() => {
+    const item = sectorStore.step(wheelSwitchDir)
+    if (item) switchSymbolBySector(item.code)
+  }, 500)
+}
+
 // ==================== 生命周期 ====================
+// 股票/周期/日期切换后：已启用的多空指标自动重算（图表由 klineReload 先重建）
+// selfRef 以 getter 引用当前 chart，兼容图表重建后实例变化
+const selfRef = {
+  get chart() { return chart.value },
+  addMarkers: (c, cfg, m) => wrappedAddMarkers(c, cfg, m),
+  clearAllMarkers: (c) => wrappedClearMarkers(c),
+}
+
+const refreshEnabledLongShort = async () => {
+  const cfg = searchStore.enabledLongShortIndicators
+  if (!cfg?.configs?.length) return
+  try {
+    await requestLongShortSignals(selfRef, { configs: cfg.configs, period: cfg.period })
+  } catch (e) {
+    console.warn('[多空指标] 切换后自动重算失败:', e)
+  }
+}
+
 onMounted(() => {
   initChart()
   searchStore.addOnLoadEvent('klineReload', reloadKLineData)
+  searchStore.addOnLoadEvent('longShortAutoRefresh', refreshEnabledLongShort)
   chartEle.value.addEventListener('mouseleave', hideTooltip)
   // 模拟交易拖拽接管（真实用户拖拽：pointerdown→up 判定）
   chartEle.value.addEventListener('pointerdown', onChartPointerDown)
   chartEle.value.addEventListener('pointerup', onChartPointerUp)
+  chartEle.value.addEventListener('wheel', onChartWheel, { passive: false })
   window.addEventListener('resize', handleResize)
 })
 
@@ -791,11 +873,14 @@ function hideTooltip() {
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
+  if (wheelSwitchTimer) clearTimeout(wheelSwitchTimer)
   searchStore.removeOnLoadEvent('klineReload')
+  searchStore.removeOnLoadEvent('longShortAutoRefresh')
   window.removeEventListener('resize', handleResize)
   chartEle.value?.removeEventListener('mouseleave', hideTooltip)
   chartEle.value?.removeEventListener('pointerdown', onChartPointerDown)
   chartEle.value?.removeEventListener('pointerup', onChartPointerUp)
+  chartEle.value?.removeEventListener('wheel', onChartWheel)
   disableCrosshair()
   destroyCloudMetrics()
   dispose('chart')
@@ -805,16 +890,17 @@ onUnmounted(() => {
 // addMarkers / clearAllMarkers 包装后同时记录明细，供“导入图表信号”使用
 const markerRecords = ref([])
 
-const wrappedAddMarkers = (chartInstance, configs, market = 'stock') => {
-  addMarkers(chartInstance, configs, market)
+const wrappedAddMarkers = (chartInstance, configs, market = 'stock', group) => {
+  addMarkers(chartInstance, configs, market, group)
   ;(configs || []).forEach(c => {
-    markerRecords.value.push({ ...c, market })
+    markerRecords.value.push({ ...c, market, group })
   })
 }
 
-const wrappedClearMarkers = (chartInstance) => {
-  clearAllMarkers(chartInstance)
-  markerRecords.value = []
+const wrappedClearMarkers = (chartInstance, group) => {
+  clearAllMarkers(chartInstance, group)
+  if (group == null) markerRecords.value = []
+  else markerRecords.value = markerRecords.value.filter(r => r.group !== group)
 }
 
 const getMarkerRecords = () => markerRecords.value

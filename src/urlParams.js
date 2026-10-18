@@ -60,11 +60,22 @@ function normalizeDateStr(s) {
 /** 参数串必须为「数字,数字,…」格式（整数/小数 + 英文逗号），否则不合格 */
 const PARAMS_RE = /^[\d.]+(,[\d.]+)*$/
 
+/** 幂等安全解码：处理指标名被双重编码（%25E6%25B6... → URLSearchParams 解一次后仍为 %E6%B6...）的情况。
+ *  仅当字符串仍含 %xx 序列时再解一次；无需解码或解码失败时原样返回（不影响单次编码/明文 URL）。 */
+function safeExtraDecode(s) {
+  if (!s) return s
+  if (/%[0-9A-Fa-f]{2}/.test(s)) {
+    try { return decodeURIComponent(s) } catch (e) { return s }
+  }
+  return s
+}
+
 /** 解析 K线技术指标：'MA:5,10,20,60|VOL:5,10,20' → [{name, calcParams, onMainChart}]
  *  支持第三段 bool 显式指定是否主图：'MA:5,10:1'（主图）/ 'RSI:14:0'（副图）/ 'MA::1'（无参数+主图）
  *  未提供第三段时按内置主图指标列表（MA/EMA/BOLL）判定 */
 function parseIndicators(raw) {
   if (!raw) return null
+  raw = safeExtraDecode(raw)
   const list = []
   for (const seg of raw.split('|')) {
     const s = seg.trim()
@@ -106,6 +117,7 @@ function parseIndicators(raw) {
 /** 解析买卖提示原始段：'MA金叉:5,10|MACD死叉:macdconfig=12,16,8' → [{name, paramsRaw}] */
 function parseLsParam(raw) {
   if (!raw) return []
+  raw = safeExtraDecode(raw)  // 兼容整段被二次编码的 URL（如 %25E6... 或 %7C）
   const out = []
   for (const seg of raw.split('|')) {
     const s = seg.trim()
@@ -202,7 +214,7 @@ const getDefaultByType = (annotation) => {
 
 const norm = (s) => String(s || '').replace(/\s+/g, '').toLowerCase()
 
-/** 从后台 WS 拉取买卖指标目录（buy + sell 合并为数组） */
+/** 从后台 WS 拉取买卖指标目录（buy + sell + neutral 合并为数组） */
 function loadIndicatorCatalog() {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(ws_buyingAndSellingIndicator_url)
@@ -227,7 +239,11 @@ function loadIndicatorCatalog() {
         params: params[key] || { params: [], doc: '' }
       }))
     }
-    return [...convertToArray(JSON.parse(data.buy)), ...convertToArray(JSON.parse(data.sell))]
+    return [
+      ...convertToArray(JSON.parse(data.buy)),
+      ...convertToArray(JSON.parse(data.sell)),
+      ...(data.neutral ? convertToArray(JSON.parse(data.neutral)) : []),
+    ]
   })
 }
 
@@ -379,6 +395,9 @@ async function applyLongShortFromUrl(raw, ctx) {
     try {
       const data = JSON.parse(event.data)
       const signals = Array.isArray(data?.data) ? data.data : []
+      if (data?.skipped?.length) {
+        ElMessage.warning(`URL 买卖提示：${data.skipped.length} 个指标计算失败已跳过：${data.skipped.map(s => s.info || s.method).join('、')}`)
+      }
       const comp = ctx.getChartInstance?.()
       const chartInst = comp?.chart
       if (!comp || !chartInst) {
@@ -386,7 +405,7 @@ async function applyLongShortFromUrl(raw, ctx) {
         searchStore.setLongShortSignals(signals)
         return
       }
-      comp.clearAllMarkers(chartInst)
+      comp.clearAllMarkers(chartInst, 'ls')
       const signalsWithTs = []
       for (const signal of signals) {
         // 与 K 线时间戳语义一致：本地时间显式 +08:00 转 epoch（逻辑同面板）
@@ -406,11 +425,13 @@ async function applyLongShortFromUrl(raw, ctx) {
         const type = (() => {
           if (signal.type === 'buy') return 'BULL'
           if (signal.type === 'sell') return 'BEAR'
+          if (signal.type === 'neutral') return 'NEUTRAL'
           return signal.type
         })()
         const value = (() => {
           if (type === 'BULL') return signal.low
           if (type === 'BEAR') return signal.high
+          if (type === 'NEUTRAL') return signal.close
           return signal.value
         })()
         signalsWithTs.push({
@@ -423,9 +444,11 @@ async function applyLongShortFromUrl(raw, ctx) {
           low: signal.low,
           high: signal.high,
         })
-        comp.addMarkers(chartInst, [{ timestamp, type, value, mes: signal.message }], 'predict')
+        comp.addMarkers(chartInst, [{ timestamp, type, value, mes: signal.message }], 'predict', 'ls')
       }
       searchStore.setLongShortSignals(signalsWithTs)
+      // 持久化已启用配置：股票切换时自动重新计算
+      searchStore.setEnabledLongShortIndicators({ configs: enabledConfigs, period })
       ElMessage.success(`URL 买卖提示：启用 ${enabledConfigs.length} 个指标，收到 ${signalsWithTs.length} 个信号`)
     } catch (e) {
       console.error('[URL] 多空信号处理失败:', e)

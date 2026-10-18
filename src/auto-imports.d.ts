@@ -7,9 +7,15 @@
 export {}
 declare global {
   const 
+  getCacheStats: typeof import('./api/index.js')['
+  const 
+  getPreloadPlan: typeof import('./api/index.js')['
+  const 
   getPyCodeCompletions: typeof import('./api/index.js')['
   const 
   getPyIndicatorList: typeof import('./api/index.js')['
+  const 
+  getSectorGroups: typeof import('./api/index.js')['
   const 
   signalAnalyze: typeof import('./api/index.js')['
   const 
@@ -17,6 +23,7 @@ declare global {
   const DEFAULT_PARAMS: typeof import('./config/indicatorDefaults.js').DEFAULT_PARAMS
   const EffectScope: typeof import('vue').EffectScope
   const ElMessage: typeof import('element-plus/es').ElMessage
+  const ElMessageBox: typeof import('element-plus/es').ElMessageBox
   const INITIAL_ENABLED_INDICATORS: typeof import('./config/indicatorDefaults.js').INITIAL_ENABLED_INDICATORS
   const MAIN_CHART_INDICATORS: typeof import('./config/indicatorDefaults.js').MAIN_CHART_INDICATORS
   const WS_cloudMetrics_url: typeof import('./api/index.js').WS_cloudMetrics_url
@@ -28,6 +35,7 @@ declare global {
   const base_http_url: typeof import('./api/index.js').base_http_url
   const base_ws_url: typeof import('./api/index.js').base_ws_url
   const clearAllMarkers: typeof import('./chart/markers.js').clearAllMarkers
+  const clearCache: typeof import('./api/index.js').clearCache
   const computed: typeof import('vue').computed
   const createApp: typeof import('vue').createApp
   const createPinia: typeof import('pinia').createPinia
@@ -38,15 +46,22 @@ declare global {
   const deleteCloudMetric: typeof import('./api/index.js').deleteCloudMetric
   const destroyCloudMetrics: typeof import('./chart/indicators/cloudMetrics.js').destroyCloudMetrics
   const effectScope: typeof import('vue').effectScope
+  const evictCacheSymbol: typeof import('./api/index.js').evictCacheSymbol
   const fetchPyIndicatorJs: typeof import('./api/index.js').fetchPyIndicatorJs
   const getActivePinia: typeof import('pinia').getActivePinia
+  const getAdminSettings: typeof import('./api/index.js').getAdminSettings
   const getBaseDirection: typeof import('./chart/markers.js').getBaseDirection
+  const getCacheConfig: typeof import('./api/index.js').getCacheConfig
+  const getCachedKline: typeof import('./api/index.js').getCachedKline
   const getCloudMetric: typeof import('./api/index.js').getCloudMetric
   const getCurrentInstance: typeof import('vue').getCurrentInstance
   const getCurrentScope: typeof import('vue').getCurrentScope
   const getCurrentWatcher: typeof import('vue').getCurrentWatcher
   const getMarkers: typeof import('./chart/markers.js').getMarkers
+  const getPreloadSources: typeof import('./api/index.js').getPreloadSources
   const getPyCodeDoc: typeof import('./api/index.js').getPyCodeDoc
+  const getSectorStocks: typeof import('./api/index.js').getSectorStocks
+  const getWatchlist: typeof import('./api/index.js').getWatchlist
   const h: typeof import('vue').h
   const inject: typeof import('vue').inject
   const isProxy: typeof import('vue').isProxy
@@ -85,9 +100,13 @@ declare global {
   const ref: typeof import('vue').ref
   const refreshCloudMetrics: typeof import('./chart/indicators/cloudMetrics.js').refreshCloudMetrics
   const removePyIndicator: typeof import('./chart/indicators/pyInd.js').removePyIndicator
+  const requestLongShortSignals: typeof import('./chart/longShortSignals.js').requestLongShortSignals
   const resolveComponent: typeof import('vue').resolveComponent
   const router: typeof import('./router/index.js').default
+  const runPreload: typeof import('./api/index.js').runPreload
+  const saveAdminSettings: typeof import('./api/index.js').saveAdminSettings
   const setActivePinia: typeof import('pinia').setActivePinia
+  const setCacheConfig: typeof import('./api/index.js').setCacheConfig
   const setCloudMetricName: typeof import('./chart/indicators/cloudMetrics.js').setCloudMetricName
   const setCloudMetricsChartGetter: typeof import('./chart/indicators/cloudMetrics.js').setCloudMetricsChartGetter
   const setMapStoreSuffix: typeof import('pinia').setMapStoreSuffix
@@ -113,6 +132,8 @@ declare global {
   const useRoute: typeof import('vue-router').useRoute
   const useRouter: typeof import('vue-router').useRouter
   const useSearchParametersStore: typeof import('./stores/searchParameters.js').useSearchParametersStore
+  const useSectorStore: typeof import('./stores/sectorStore.js').useSectorStore
+  const useSettingStore: typeof import('./stores/setting.js').useSettingStore
   const useSettings: typeof import('./composables/useSettings.js').useSettings
   const useSimulationStore: typeof import('./stores/simulationStore.js').useSimulationStore
   const useSlots: typeof import('vue').useSlots
@@ -123,6 +144,7 @@ declare global {
   const watchEffect: typeof import('vue').watchEffect
   const watchPostEffect: typeof import('vue').watchPostEffect
   const watchSyncEffect: typeof import('vue').watchSyncEffect
+  const watchlistOp: typeof import('./api/index.js').watchlistOp
   const ws_DealingWithLongShortIndicators_url: typeof import('./api/index.js').ws_DealingWithLongShortIndicators_url
   const ws_allSymbols_url: typeof import('./api/index.js').ws_allSymbols_url
   const ws_buyingAndSellingIndicator_url: typeof import('./api/index.js').ws_buyingAndSellingIndicator_url
@@ -130,6 +152,7 @@ declare global {
   const ws_getLongShortSignal_url: typeof import('./api/index.js').ws_getLongShortSignal_url
   const ws_getTradingSignals_url: typeof import('./api/index.js').ws_getTradingSignals_url
   const ws_kline_url: typeof import('./api/index.js').ws_kline_url
+  const ws_searchSymbols_url: typeof import('./api/index.js').ws_searchSymbols_url
   const ws_signalQualityEvaluate_url: typeof import('./api/index.js').ws_signalQualityEvaluate_url
   const ws_simulationEvaluate_url: typeof import('./api/index.js').ws_simulationEvaluate_url
   const ws_syncData_url: typeof import('./api/index.js').ws_syncData_url

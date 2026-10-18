@@ -105,12 +105,12 @@ akstock/
     ├── api/
     │   └── index.js           # 后端 API 地址常量 + WebSocket/REST 封装
     ├── router/
-    │   └── index.js           # 路由（单页 / → kLineView）
+    │   └── index.js           # 路由（/ → home.vue，/settings → Settings.vue，/admin → AdminPanel.vue）
     ├── stores/                # Pinia 状态管理
     │   ├── searchParameters.js    # 搜索参数（标的/日期/复权/周期/已启用指标/多空信号）
     │   ├── simulationStore.js      # 模拟交易状态机（逐根跳柱/持仓/盈亏/成交记录）
     │   ├── cloudMetricStore.js     # 云指标列表状态
-    │   └── setting.js              # 设置（预留）
+    │   └── setting.js              # 设置（价格小数位数，localStorage 持久化）
     ├── config/
     │   └── indicatorDefaults.js   # 指标默认参数 + 默认启用列表
     ├── chart/
@@ -125,6 +125,7 @@ akstock/
     │   └── overlays.js          # 自定义覆盖图（simpleAnnotation2 买卖注解 / textTip 文字标注）
     ├── components/
     │   ├── home.vue             # 主布局（顶栏/菜单栏/K线区/模拟交易侧栏/功能抽屉）
+    │   ├── Settings.vue         # 设置页（数据源切换 / 价格小数位数）
     │   └── panels/              # 功能面板（抽屉或侧栏挂载）
     │       ├── IndicatorPanel.vue        # K线技术指标管理（启用/主图/参数编辑）
     │       ├── LongShortIndicatorPanel.vue # 买卖提示指标（后端指标目录 + 参数配置 + 多空信号生成）
@@ -148,7 +149,9 @@ akstock/
 - **实时轮询**：`subscribeBar` 每 5 秒拉取最新 K线（仅交易时段）
 - **周期切换**：1分/5分/15分/30分/60分/日K/周K/月K，调用 `chart.setPeriod({type, span})`
 - **自定义 Tooltip**：关闭内置 tooltip，用 `onCrosshairChange` + `convertFromPixel` 实现
-  增强版悬浮提示（开高低收量涨幅 + 交易信号消息）
+  增强版悬浮提示（开高低收量涨幅 + 交易信号消息）；**开高低收价格按设置页「价格小数位数」格式化**
+  （`settingStore.pricePrecision`，默认 2 位，0~6 可调，localStorage 持久化，
+  变更后自动重建图表即时生效；图表 `init` 的 `precision` 同步该设置，价格轴刻度/内置数值同精度显示）
 - **十字光标时间精确到秒**：`setFormatter` 在 crosshair 类型时把 `HH:mm` 模板补齐为 `HH:mm:ss`
 - **指标重放**：K线对象重建（切换标的/周期）后，按 `searchStore.enabledIndicators`
   重新创建已启用指标，修复"指标未在K线对象变更后重新启用"
@@ -290,6 +293,41 @@ akstock/
 - 已应用列表展示 `数据: <表达式>` tag；K线对象变更后按 store 中表达式自动重放
 - 完整接口与语法详见 `docs/backend-api.md` 第 7 节
 
+### 9. 板块 / 自选 + 滚轮切换（`SectorPanel.vue` + `sectorStore.js`）
+
+- 菜单「板块」打开抽屉，三个标签：**行业板块 / 指数成分 / 自选**
+  - 行业板块：通达信全部 A 股板块（`get_sector_list`，本地缓存 24h）
+  - 指数成分：上证指数成份 / 沪深300 / 中证500 / 中证1000 / 国证2000 / 中证2000 / 中证A500 / 创业板 / 科创板 / 北交所（`get_stock_list(market)`）
+  - 自选：webapi 本地缓存，**支持多组**（新建/删除组、改名、加股、删股）
+- 点击左侧分组 → 右侧显示成分股列表，同时**激活滚轮切换**：
+  - 板块面板列表内：直接滚动切换上一只/下一只（阻止默认滚动）
+  - K线图区：**Ctrl/Shift/Alt + 滚轮** 切换（不干扰 K线缩放）
+- 点击股票 / 滚轮切换 → 更新 `searchStore.symbol` 并 `onLoad()` 重载 K线
+- 自选组支持「加当前到自选」（行业/指数页）与「移出自选」（自选页）
+
+### 10. 设置（`Settings.vue` + `setting.js`）
+
+- **价格小数位数**（显示设置）：K 线十字光标开高低收、价格轴刻度、模拟交易标记等行情价格显示
+  的小数位数，默认 **2**，范围 0~6；`settingStore.pricePrecision` 持久化到
+  `localStorage`（key `akstock_price_precision`），变更后 K线图自动重建生效；
+  模拟交易标记文本（`getMarkerConfigs` 的 `mes`）同步使用该精度
+- **K 线数据来源**：通达信直拉（网页默认）/ 内存缓存（后端 `stock_cache` 服务，
+  懒加载，TTL 30min；见后端文档），切换后下次加载生效；下方展示缓存状态
+  （条目数/占用/预算/利用率，可刷新与清空）
+- **后台管理**（入口卡片 → `/admin`，`AdminPanel.vue`）：
+  - **数据预加载**：基于 `webapi/data/` 下 `watchlist.json`（自选）与 `sector_cache.json`
+    （已缓存的板块成分/指数成分）提取股票代码清单（去重统计 + 样例预览），选择复权/周期/起止
+    区间/数量上限后一键预热到内存缓存；返回成功/失败数、耗时与最新缓存状态
+  - **缓存策略调整**：内存预算（GiB）/ 缓存 TTL（秒）/ 清理扫描间隔（秒）运行时调整，
+    无需重启后端；调小预算立即按新预算逐出最旧条目
+  - **分组精确选择**：预加载来源按组勾选——自选组（`wl_*`）/ 板块（`sector_stocks:*`）/
+    指数（`index_stocks:*`），组名映射自 `sector_list` / `INDEX_GROUPS`，展示各组合计数量；
+    执行时按组 id 精确提取（`POST /api/admin/preload` 的 `groups` 字段）
+  - **配置持久化**：预加载选择 + 缓存策略保存到 `webapi/data/setting.json`（`GET/POST
+    /api/admin/settings`），打开页面自动恢复；后端进程重启时 lifespan 自动恢复缓存策略
+  - **数据来源持久化**：设置页「数据来源」（通达信直拉 / 内存缓存）选择同样保存到
+    `setting.json`，应用启动时自动恢复（`App.vue`），刷新页面不丢失
+
 ---
 
 ## 状态管理（Pinia）
@@ -321,6 +359,24 @@ akstock/
 
 计算属性：`currentBar` / `availableCash` / `totalEquity` / `currentSignals` /
 `unrealizedPnl` / `nextSignal`。
+
+### `sector`（板块/自选激活状态）
+
+| 状态/方法 | 说明 |
+|---|---|
+| `activeList` | 当前激活列表 `{type, groupId, groupName, items:[{code,name}]}` |
+| `activeIndex` | 当前高亮索引（滚轮切换用） |
+| `wheelEnabled` | 是否已激活滚轮切换（点击分组后自动启用） |
+| `setActiveList(list)` | 激活列表并定位当前标的索引 |
+| `step(deltaY)` | 滚轮步进：deltaY>0 下一只，<0 上一只；越界返回 null |
+| `clampIndex()` | 删股后索引收敛 |
+
+### `setting`（全局设置）
+
+| 状态/方法 | 说明 |
+|---|---|
+| `pricePrecision` | 价格小数位数（默认 2，范围 0~6），`localStorage` 持久化（key `akstock_price_precision`） |
+| `setPricePrecision(n)` | 更新精度并持久化；kLineView 监听该值变化自动重建图表（`init` precision + Tooltip 同步） |
 
 ---
 
@@ -356,9 +412,13 @@ base_http_url = "http://localhost:8000"
 | DELETE | `/api/cloudMetrics/delete` | 删除云指标 |
 | POST | `/api/trades_csv` | 上传交易记录 CSV（pybroker 订单） |
 | POST | `/api/signalAnalyze` | K 线信号表现分析（bool 信号 → 未来 N 根 K 线指标，SignalQualityPanel） |
+| GET | `/api/sectors/list` | 板块分组列表（`type=sector|index|watchlist`） |
+| GET | `/api/sectors/stocks` | 分组成分股（`type` + `id`） |
+| GET | `/api/sectors/watchlist` | 全部自选组（含明细，本地多组缓存） |
+| POST | `/api/sectors/watchlist` | 自选管理（create / add / remove / rename / delete） |
 | GET | `/api/health` | 健康检查 |
 
-REST 封装函数：`uploadCloudMetric` / `listCloudMetrics` / `getCloudMetric` / `deleteCloudMetric` / `signalAnalyze`。
+REST 封装函数：`uploadCloudMetric` / `listCloudMetrics` / `getCloudMetric` / `deleteCloudMetric` / `signalAnalyze` / `getSectorGroups` / `getSectorStocks` / `watchlistOp` / `getWatchlist`。
 
 ---
 
@@ -376,7 +436,7 @@ REST 封装函数：`uploadCloudMetric` / `listCloudMetrics` / `getCloudMetric` 
 
 | API | 用途 |
 |---|---|
-| `init(id, {locale, timezone})` | 初始化图表 |
+| `init(id, {locale, timezone, precision})` | 初始化图表（`precision` 价格小数位数，默认 2） |
 | `setStyles(styles)` | 设置深色主题样式 |
 | `setSymbol({ticker})` | 设置标的 |
 | `setPeriod({type, span})` | 设置周期（minute/hour/day/week/month） |

@@ -11,11 +11,13 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AdminPanel: typeof import('./views/AdminPanel.vue')['default']
     App: typeof import('./App.vue')['default']
     CloudMetricPanel: typeof import('./components/panels/CloudMetricPanel.vue')['default']
     CodeEditorDialog: typeof import('./components/panels/CodeEditorDialog.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElButton: typeof import('element-plus/es')['ElButton']
+    ElCard: typeof import('element-plus/es')['ElCard']
     ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
     ElContainer: typeof import('element-plus/es')['ElContainer']
     ElDatePicker: typeof import('element-plus/es')['ElDatePicker']
@@ -42,17 +44,19 @@ declare module 'vue' {
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     Home: typeof import('./components/home.vue')['default']
     IndicatorPanel: typeof import('./components/panels/IndicatorPanel.vue')['default']
+    KeyboardSearch: typeof import('./components/KeyboardSearch.vue')['default']
     KLineView: typeof import('./views/kLineView.vue')['default']
     LongShortIndicatorPanel: typeof import('./components/panels/LongShortIndicatorPanel.vue')['default']
     PythonIndicatorPanel: typeof import('./components/panels/PythonIndicatorPanel.vue')['default']
     QuantEditor: typeof import('./components/QuantEditor.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SectorPanel: typeof import('./components/panels/SectorPanel.vue')['default']
     SelectionDeviceView: typeof import('./views/SelectionDeviceView.vue')['default']
+    Settings: typeof import('./components/Settings.vue')['default']
     SignalQualityDialog: typeof import('./components/panels/SignalQualityDialog.vue')['default']
     SignalQualityPanel: typeof import('./components/panels/SignalQualityPanel.vue')['default']
     SimulationPanel: typeof import('./components/panels/SimulationPanel.vue')['default']
-    T: typeof import('./components/T.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

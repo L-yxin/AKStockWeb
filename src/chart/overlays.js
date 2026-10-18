@@ -39,6 +39,7 @@ registerOverlay({
       } else if (market === 'predict') {
         if (type === 'BULL' || type === '多') return '#ef5350'
         if (type === 'BEAR' || type === '空') return '#26a69a'
+        if (type === 'NEUTRAL' || type === '中性') return '#f59e0b'
       }
       return '#888888'
     }

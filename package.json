@@ -17,6 +17,7 @@
     "klinecharts": "^10.0.0-beta1",
     "monaco-editor": "^0.57.0",
     "pinia": "^3.0.4",
+    "pinyin-pro": "^3.29.4",
     "technicalindicators": "^3.1.0",
     "unplugin-auto-import": "^21.0.0",
     "unplugin-vue-components": "^32.0.0",

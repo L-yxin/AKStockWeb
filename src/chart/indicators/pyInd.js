@@ -1,17 +1,22 @@
 // ============================================================================
 // pyInd Python 指标（K线叠加）
 // 数据由 Python 后端（Indicator 目录 + FastAPI /api/pyInd/{name}.js）计算并缓存，
-// 前端 fetch JS 后取 window.__pyInd.data（[{timestamp, value}, ...]），
+// 前端 fetch JS 后取 window.__pyInd：
+//   - 单线：data: [{timestamp, value}, ...]
+//   - 多线：lines: [{key, title, data:[{timestamp, value}]}, ...]（如 platform_box 上下沿）
 // 动态注册 klinecharts 指标 pyInd_<name> 按时间戳对齐到 K 线展示。
 // ============================================================================
 import { registerIndicator } from 'klinecharts'
 import { fetchPyIndicatorJs } from '@/api'
 import { useSearchParametersStore } from '@/stores/searchParameters'
 
-// 数据缓存：key(`${name}|${params}|${code}|${period}|${adjust}`) -> Map(timestamp -> value)
+// 数据缓存：key(`${name}|${params}|${code}|${period}|${adjust}`) -> {lines:[{key,title,map}]}
 const dataCache = new Map()
 // 已注册的指标模板名（registerIndicator 为全局注册，同名只注册一次）
 const registeredNames = new Set()
+
+// 多线配色盘（单线仍用按名哈希色）
+const PALETTE = ['#FFB74D', '#4FC3F7', '#81C784', '#BA68C8', '#FF8A65', '#4DD0E1', '#AED581', '#F06292']
 
 // 按指标名生成稳定颜色
 function colorOf(name) {
@@ -20,37 +25,43 @@ function colorOf(name) {
   return `hsl(${h}, 70%, 55%)`
 }
 
-function makeTemplate(name) {
+function makeTemplate(name, lineKeys) {
   const color = colorOf(name)
+  // 注册模板时即确定分线（fetch 完成后线数已知）：单线用按名哈希色，多线用调色盘
+  const keys = lineKeys && lineKeys.length ? lineKeys : ['value']
+  const figures = keys.map((k, i) => ({
+    key: k,
+    title: k === 'value' ? name : k,
+    type: 'line',
+    styles: () => ({ color: keys.length > 1 ? PALETTE[i % PALETTE.length] : color, size: 1 })
+  }))
   return {
     name: `pyInd_${name}`,
     shortName: name,
     series: 'normal',   // 创建实例时按主图/副图覆盖（主图 price / 副图 normal）
     precision: 6,
-    figures: [
-      {
-        key: 'value',
-        title: name,
-        type: 'line',
-        styles: () => ({ color, size: 1 })
-      }
-    ],
+    figures,
     calc: (dataList, indicator) => {
-      const vmap = dataCache.get(indicator.calcParams?.[0])
-      if (!vmap) return dataList.map(() => ({ value: null }))
+      const entry = dataCache.get(indicator.calcParams?.[0])
+      if (!entry || !entry.lines?.length) return dataList.map(() => ({ value: null }))
+      const lines = entry.lines
       // 按数据量级动态设置显示精度：斜率/比率类小数值（如 1e-4）自动提高小数位，
       // 避免 tooltip / 刻度把 0.000245 显示成 0
       let maxAbs = 0
-      vmap.forEach(v => {
+      lines.forEach(ln => ln.map.forEach(v => {
         const a = Math.abs(v)
         if (a > maxAbs) maxAbs = a
-      })
+      }))
       if (maxAbs >= 100) indicator.precision = 2
       else if (maxAbs >= 1) indicator.precision = 4
       else if (maxAbs >= 0.01) indicator.precision = 6
       else if (maxAbs >= 0.0001) indicator.precision = 8
       else indicator.precision = 10
-      return dataList.map(d => ({ value: vmap.get(d.timestamp) ?? null }))
+      return dataList.map(d => {
+        const out = {}
+        lines.forEach(ln => { out[ln.key] = ln.map.get(d.timestamp) ?? null })
+        return out
+      })
     }
   }
 }
@@ -79,14 +90,25 @@ export async function applyPyIndicator(chart, { name, params = [], data = '', on
   // 执行 JS（后端仅生成 window.__pyInd 赋值，受控内容）
   const exec = new Function('window', jsText)
   exec(window)
-  const indData = window.__pyInd?.data || []
-  const vmap = new Map()
-  indData.forEach(d => { if (d && d.value != null) vmap.set(d.timestamp, d.value) })
-  dataCache.set(key, vmap)
+  const raw = window.__pyInd || {}
+  // 统一为 lines 结构：单线 data → [{key:'value', map}]；多线 lines → 各线 map
+  const lines = []
+  if (Array.isArray(raw.lines) && raw.lines.length) {
+    raw.lines.forEach(ln => {
+      const map = new Map()
+      ;(ln.data || []).forEach(d => { if (d && d.value != null) map.set(d.timestamp, d.value) })
+      lines.push({ key: ln.key || 'value', title: ln.title || ln.key || name, map })
+    })
+  } else if (Array.isArray(raw.data)) {
+    const map = new Map()
+    raw.data.forEach(d => { if (d && d.value != null) map.set(d.timestamp, d.value) })
+    lines.push({ key: 'value', title: name, map })
+  }
+  dataCache.set(key, { lines })
 
   const indName = `pyInd_${name}`
   if (!registeredNames.has(indName)) {
-    registerIndicator(makeTemplate(name))
+    registerIndicator(makeTemplate(name, lines.map(ln => ln.key)))
     registeredNames.add(indName)
   }
   // 同指标已存在（参数/主副图变化）→ 先移除再重建，确保 calcParams 更新生效

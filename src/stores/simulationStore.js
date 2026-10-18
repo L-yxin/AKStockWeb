@@ -5,6 +5,8 @@
 // - 时间语义与 K 线一致：本地时间显式 +08:00 转 epoch（毫秒）。
 // ============================================================================
 
+import { useSettingStore } from '@/stores/setting'
+
 const _INITIAL_CASH = 1000000 // 初始资金（默认，面板展示）
 
 // 本地时间串（YYYY-MM-DD）→ epoch ms（按 Asia/Shanghai 解释）
@@ -312,11 +314,13 @@ export const useSimulationStore = defineStore('simulation', () => {
 
   // ---------- 标记（交易记录展示到 K 线） ----------
   function getMarkerConfigs() {
+    const settingStore = useSettingStore()
+    const fmtP = (v) => (v == null || isNaN(v) ? '--' : Number(v).toFixed(settingStore.pricePrecision))
     return trades.value.map(t => ({
       timestamp: t.timestamp,
       value: t.price,
       type: _MARKER_TYPE[t.side] || '多开',
-      mes: `${t.action} ${t.quantity} 手 @ ${t.price}` + (t.pnl != null ? `\n盈亏 ${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}` : ''),
+      mes: `${t.action} ${t.quantity} 手 @ ${fmtP(t.price)}` + (t.pnl != null ? `\n盈亏 ${t.pnl >= 0 ? '+' : ''}${fmtP(t.pnl)}` : ''),
     }))
   }
 
