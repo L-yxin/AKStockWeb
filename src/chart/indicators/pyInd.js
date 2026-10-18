@@ -83,10 +83,13 @@ export async function applyPyIndicator(chart, { name, params = [], data = '', on
   const key = `${name}|${data}|${paramsStr}|${code}|${period}|${adjust}`
 
   const store = useSearchParametersStore()
+  const symbolAtStart = code
   const jsText = await fetchPyIndicatorJs(name, paramsStr, {
     code, period, adjust, data, refresh: refresh ? 1 : 0,
     start: store.startDate || '', end: store.endDate || '',
   })
+  // 股票已切换：丢弃过期响应，避免旧股票指标渲染到新图表
+  if (symbolAtStart !== store.symbol) return null
   // 执行 JS（后端仅生成 window.__pyInd 赋值，受控内容）
   const exec = new Function('window', jsText)
   exec(window)

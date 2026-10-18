@@ -166,6 +166,9 @@
         <el-tag :type="it.onMainChart ? 'warning' : 'success'" size="small" effect="plain">
           {{ it.onMainChart ? '主图' : '副图' }}
         </el-tag>
+        <el-button size="small" text type="primary" title="修改参数" @click="editApplied(it)">
+          <el-icon><Edit /></el-icon>
+        </el-button>
         <el-button size="small" text type="danger" @click="removeOne(it.name)">
           <el-icon><Delete /></el-icon>
         </el-button>
@@ -176,7 +179,8 @@
 </template>
 
 <script setup>
-import { Delete } from '@element-plus/icons-vue'
+import { onMounted } from 'vue'
+import { Delete, Edit } from '@element-plus/icons-vue'
 import { getPyIndicatorList } from '@/api'
 import { applyPyIndicator, removePyIndicator } from '@/chart/indicators/pyInd'
 
@@ -310,6 +314,11 @@ const loadList = async () => {
   }
 }
 loadList()
+
+// 面板重开时从 store 恢复已应用列表（图表上的指标由 kLineView 重放，面板本地状态可能已丢）
+onMounted(() => {
+  appliedList.value = searchStore.pythonIndicators.map(it => ({ ...it }))
+})
 
 // 默认步骤：talib.MA(close, 5)
 const defaultStep = () => ({ func: 'talib.MA', params: [{ type: 'basic', value: 'close' }, { type: 'number', value: '5' }] })
@@ -499,6 +508,111 @@ const removeOne = (name) => {
   }
   appliedList.value = appliedList.value.filter(it => it.name !== name)
   syncStore()
+}
+
+// ---------- 编辑已应用项：回填配置表单，允许修改参数后重新应用 ----------
+// 顶层逗号拆分（考虑括号/引号嵌套，与后端 collectData 对应）
+function splitTopComma(s) {
+  const parts = []
+  let cur = ''
+  let depth = 0
+  for (const ch of s) {
+    if (ch === '(' || ch === '[') depth++
+    else if (ch === ')' || ch === ']') depth--
+    if (ch === ',' && depth === 0) { parts.push(cur.trim()); cur = ''; continue }
+    cur += ch
+  }
+  if (cur.trim()) parts.push(cur.trim())
+  return parts
+}
+
+// 数据源表达式 → 分步编辑器（collectData 的逆过程）
+// 'a=talib.MA(close,5);b=a;b' → [{func:'talib.MA', params:[{type:'basic',value:'col:close'},{type:'number',value:'5'}]}]
+const parseStepsToEditor = (ed, expr) => {
+  const parts = (expr || '').split(';').map(s => s.trim()).filter(Boolean)
+  const steps = []
+  const varIndex = {}
+  let vi = 0
+  parts.forEach(p => {
+    const m = /^([a-z])=(.*)$/.exec(p)
+    if (!m) return
+    const [, v, rhs] = m
+    varIndex[v] = vi
+    const rhsT = rhs.trim()
+    const fm = /^([A-Za-z_][\w.]*)\((.*)\)$/.exec(rhsT)
+    if (fm) {
+      const args = splitTopComma(fm[2]).map(a => {
+        const t = a.trim()
+        if (/^-?\d+(\.\d+)?$/.test(t)) return { type: 'number', value: t }
+        if (t === 'true' || t === 'false') return { type: 'bool', value: t === 'true' }
+        if (basicOptions.includes(t)) return { type: 'basic', value: 'col:' + t }
+        if (/^[a-z]$/.test(t) && t in varIndex) return { type: 'var', value: String(varIndex[t]) }
+        return { type: 'basic', value: 'col:' + t }
+      })
+      steps.push({ func: fm[1], params: args })
+    } else {
+      // 纯引用：变量或基本词
+      const t = rhsT
+      if (basicOptions.includes(t)) {
+        steps.push({ func: '', params: [{ type: 'basic', value: 'col:' + t }] })
+      } else if (/^[a-z]$/.test(t) && t in varIndex) {
+        steps.push({ func: '', params: [{ type: 'var', value: String(varIndex[t]) }] })
+      } else {
+        steps.push({ func: '', params: [{ type: 'basic', value: 'col:close' }] })
+      }
+    }
+    vi++
+  })
+  if (!steps.length) { ed.steps = [defaultStep()]; ed.finalVar = 0; return }
+  // 末尾孤变量（如 ';b'）→ finalVar 指向该步
+  const last = parts[parts.length - 1]
+  const lm = /^([a-z])$/.exec(last)
+  if (lm && lm[1] in varIndex) ed.finalVar = varIndex[lm[1]]
+  else ed.finalVar = steps.length - 1
+  ed.steps = steps
+}
+
+// 已应用项 data 字段 → 重建数据源编辑器
+const parseDataToEditors = (data) => {
+  const spec = selectedSpec.value
+  if (!spec) return
+  let map = {}
+  const s = String(data || '').trim()
+  if (s.startsWith('{')) {
+    try { map = JSON.parse(s) } catch (e) { map = {} }
+  } else {
+    const dps = spec.data_params || []
+    if (dps.length) map[dps[0]] = s
+  }
+  dataEditors.value = (spec.data_params || []).map(name => {
+    const ed = {
+      name,
+      basicData: basicOptions.includes(name) ? name : 'close',
+      steps: [],
+      finalVar: 0,
+    }
+    const expr = map[name]
+    if (expr && !isColumnParam(name)) parseStepsToEditor(ed, expr)
+    else if (!expr) { ed.steps = [defaultStep()]; ed.finalVar = 0 }
+    return ed
+  })
+}
+
+// 点击已应用项 → 回填配置区（指标/参数/位置/数据源），修改后点"添加 / 刷新"覆盖更新
+const editApplied = (it) => {
+  selectedName.value = it.name
+  onSelectChange()
+  // 回填普通参数（顺序与 editableParams 对齐）
+  const eps = editableParams.value
+  if (Array.isArray(it.params)) {
+    it.params.forEach((v, i) => {
+      const p = eps[i]
+      if (p) paramsForm[p.name] = String(v)
+    })
+  }
+  onMainChart.value = !!it.onMainChart
+  // 回填数据源表达式（列名参数自动恢复；复合参数按表达式解析）
+  parseDataToEditors(it.data)
 }
 
 defineExpose({ appliedList })

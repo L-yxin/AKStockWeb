@@ -625,6 +625,13 @@ a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL
 - 「详细文档」只读框展示 `doc02`（完整 __doc__）；指标下拉选中区只显示 `doc` 描述（可搜索）
 - 已应用列表展示 `数据: <表达式>` tag；K 线对象变更后按 store 中的 data 表达式自动重放
 
+### 7.5 面板「已应用」交互（前端行为）
+
+- **重开面板恢复**：`PythonIndicatorPanel` 挂载时从 `searchStore.pythonIndicators` 恢复已应用列表（组件本地状态销毁不丢）；图表上的指标由 `kLineView.initChart()` 按 store 重放
+- **编辑已应用项**：已应用行「编辑」按钮（✎）→ 回填指标/参数/位置/数据源（`data` 表达式自动逆解析为分步编辑器：`a=talib.MA(close,5);a` → 第 1 步 talib.MA + col:close + 数字 5），修改后点「添加 / 刷新」覆盖更新（store 同步、图表重建）
+- **股票切换竞态防护**：`pyInd.js` 拉取 JS 前记录发起时标的，响应返回后若 `store.symbol` 已变则丢弃（防快速切换时旧标的响应覆盖新图表）；切换后重放始终以当前 `store.symbol` 计算
+- 已应用列表支持删除（🗑）与强制重算（后端 refresh=1 绕过 5 分钟缓存）
+
 ***
 
 ## 8. 变更记录
@@ -655,6 +662,7 @@ a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL
 | 2026-10-11 | 前端后台管理页：`/admin` 路由（`AdminPanel.vue`）——数据预加载（来源勾选自选/板块/指数 + 计划统计样例 + 参数表单 + 执行结果）、缓存策略调整（预算/TTL/扫描间隔保存即生效）、缓存状态卡；`Settings.vue` 新增「后台管理」入口卡片跳转 `/admin`；`src/api/index.js` 新增 `getPreloadPlan` / `runPreload` / `getCacheConfig` / `setCacheConfig` |
 | 2026-10-11 | 后台管理增强：①**分组精确选择**——`GET /api/admin/preload/sources` 返回可勾选分组明细（自选组 `wl_*` / 板块 `sector_stocks:*` / 指数 `index_stocks:*`，组名映射自 `sector_list` 与 `INDEX_GROUPS`，含各组合计数）；`POST /api/admin/preload` 新增 `groups` 字段按组 id 精确提取（兼容原 `sources` 粗粒度）②**配置持久化**——`GET/POST /api/admin/settings` 读写 `webapi/data/setting.json`（预加载选择 + 缓存策略），保存时同步应用缓存策略；`main.py` lifespan 启动时自动恢复保存的缓存策略 ③**滚动修复**——`src/style.css` `body{overflow:hidden}`（K线全屏布局）导致长页面不可滚动，`Settings.vue` / `AdminPanel.vue` 根元素改 `height:100%; overflow-y:auto` 自行滚动 |
 | 2026-10-11 | **数据来源持久化**：设置页「数据来源」（通达信直拉 tq / 内存缓存 cache）选择保存到后端 `data/setting.json`（`GET/POST /api/admin/settings` 的 `dataSource` 字段，仅接受 tq/cache）；前端 `Settings.vue` 切换时异步 `saveAdminSettings({dataSource})`、打开页面时 `restoreDataSource()` 恢复；`App.vue` 启动时读取后端恢复数据源（早于 K 线首次加载），刷新页面不丢失选择 |
+| 2026-10-18 | pyInd 面板三处修复：①**重开面板恢复已应用**——`PythonIndicatorPanel.vue` 挂载时从 store 恢复 `appliedList`（此前组件销毁即丢，图表上指标仍由 initChart 重放，造成"已应用不显示但 K 线技术指标可见"）；②**编辑已应用项**——已应用行新增「编辑」按钮，点击回填指标/参数/位置/数据源（`data` 表达式逆解析为分步编辑器），修改后「添加 / 刷新」覆盖更新；③**股票切换竞态防护**——`pyInd.js` 拉取 JS 后校验发起时标的与当前 `store.symbol`，不一致即丢弃，防快速切换时旧标的响应覆盖新图表；切换后重放始终以当前 symbol 计算 |
 | 2026-10-11 | **标记分组隔离**：买卖提示（`ls`）/ pybroker 订单（`trades`）/ 信号表现分析（`sa`）/ 模拟交易（`sim`）四类 K 线标记改用 klinecharts `groupId` 分组（`createOverlay({groupId})` + `removeOverlay({groupId})`），各功能开启/清除互不影响，相互独立开关；股票切换等全量场景仍全清（`clearAllMarkers` 不传组） |
 | 2026-10-11 | **热更新排除**：新增 `webapi/run_server.py` 启动脚本（`uvicorn.run(reload_excludes=[...])`），排除 `stockSelection / Strategy / test / use_packages / MarketSentiment / webapi/test` 目录的改动触发后端重载；规避命令行 `--reload-exclude "**"` 在 Windows 终端被通配符展开的报错 |
 | 2026-10-11 | **URL 双重编码兼容**：`src/urlParams.js` 新增幂等安全解码 `safeExtraDecode`（仅当串仍含 `%xx` 时再解一次，明文/单次编码 URL 不受影响），应用于 `parseIndicators` 与 `parseLsParam`——修复 URL 整段被二次编码（如 `%25E6...`、`%7C`）时中文指标名匹配不到、提示"目录中不存在"的问题；`tool/make_akstock_url.py` 本身为单次编码（正确），无需改动 |
