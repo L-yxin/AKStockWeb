@@ -593,6 +593,13 @@ window.__pyInd = {
 - 前端 `src/chart/indicators/pyInd.js` 按 `lines` 注册多条 figure（调色盘分色），主图/副图均可叠加
 - 复合表达式中引用多线指标：按行拆 tuple，`a=platform_box(...)` 默认取第一行，`a[1]` 取第二行（与 talib 多输出一致）
 
+**URL 深链 `pyInd` 参数**（`src/urlParams.js` 支持）：
+
+- 语法：`pyInd=名称[:data=表达式;参数名=值;...;main=1]`，`|` 分隔多指标；参数为**命名式**（未列出的参数用后端默认值）
+- `data` 特殊键：数据表达式，**必须为段内第一个键且值不含 `;` / `|`**（复合表达式请在面板配置）；`main=1` 显式主图（缺省副图）
+- 示例：`pyInd=alpha089:data=close;main=1|platform_box:window=20;max_amp=0.1|bias_rate`
+- 生成工具：`make_akstock_url(code, ..., py_indicators=[{"name":"alpha089","params":{"data":"close"},"main":True}])`（`webapi/webtool/make_akstock_url`）
+
 **Alpha101 横截面因子（`stocks` 多股票注入）**：
 
 - 实现：`Indicator/alpha101/` 100 个横截面因子（alpha002~alpha101，源自原 `use_packages/Quant_Alpha101`，use_packages 已删除）；`KLineForm/managerTool.py` 的 `StocksData` 容器（`{symbol: {field: 等长数值序列}}`，至少 close）；选股适配层 `KLineForm/StockSelectionStrategy/alpha101`（`select_stocks(stocks, factor, top_n, **params) -> [(symbol, score)]` 按最新因子值降序、预热期 NaN 排末尾，`rank_stocks` 别名，`list_factors()`）

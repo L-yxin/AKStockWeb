@@ -21,17 +21,22 @@
 //                        指标名匹配后台目录的 method 或 info；
 //                        参数在校验时与后台目录定义比对（类型/个数/数值范围），
 //                        不合格的指标跳过并给出警告。
+//   pyInd                Python 指标（Indicator 目录，后端计算）：名称[:参数名=值;...] 用 | 分隔。
+//                        参数为命名式；data 为特殊键（数据表达式，须为段内第一个键，值不含 ; 与 |）；
+//                        main=1 显式主图（缺省副图）；未列出的参数用后端默认值。
+//                        如 pyInd=alpha089:data=close|platform_box:window=20;max_amp=0.1;main=1
 //   trades               1 | true → 加载 pybroker 订单
 //   cloud                1 | true → 仅刷新云指标（列表 + K线叠加缓存），不打开面板
 //
 // 示例：
 //   http://localhost:5173/?code=sh600000&adjust=front&start=2024-01-01&end=2026-09-06
-//     &indicators=MA:5,10,20,60|VOL:5,10,20&ls=MA金叉:5,10&trades=1&cloud=1
+//     &indicators=MA:5,10,20,60|VOL:5,10,20&ls=MA金叉:5,10&pyInd=alpha089&trades=1&cloud=1
 // ============================================================================
 import {
   ws_buyingAndSellingIndicator_url,
   ws_getLongShortSignal_url,
   listCloudMetrics,
+  getPyIndicatorList,
 } from '@/api'
 import { DEFAULT_PARAMS, MAIN_CHART_INDICATORS } from '@/config/indicatorDefaults'
 import { refreshCloudMetrics } from '@/chart/indicators/cloudMetrics'
@@ -462,6 +467,137 @@ async function applyLongShortFromUrl(raw, ctx) {
   }
 }
 
+// ---------- Python 指标（pyInd）URL 处理 ----------
+
+/** 按目录 annotation 解析命名式参数值（对齐 PythonIndicatorPanel.collectParams 语义）；
+ *  非法返回 undefined */
+function parsePyParamValue(annotation, raw) {
+  const a = annotation || ''
+  const s = String(raw).trim()
+  if (a === 'str') return s
+  if (a === 'bool') {
+    const t = s.toLowerCase()
+    if (['1', 'true', 'yes', 'on'].includes(t)) return true
+    if (['0', 'false', 'no', 'off'].includes(t)) return false
+    return undefined
+  }
+  const n = Number(s)
+  return isNaN(n) ? undefined : n
+}
+
+/**
+ * Python 指标 URL 处理：
+ * 1) 拉取 /api/pyInd/list 指标目录
+ * 2) 按 name 匹配；data 键（须段内第一个键，值不含 ; 与 |）作为数据表达式；
+ *    main=1 显式主图；其余命名参数按目录 annotation 校验并转换
+ * 3) 构造 {name, params, data, onMainChart} 写入 searchStore.pythonIndicators
+ *    （K线加载回调按 store 逐项 applyPyIndicator 渲染）
+ */
+async function applyPyIndFromUrl(raw) {
+  const segs = parseLsParam(raw)
+  if (!segs.length) return
+
+  let catalog
+  try {
+    catalog = await getPyIndicatorList()
+  } catch (e) {
+    console.error('[URL] Python指标目录加载失败:', e)
+    ElMessage.warning('URL Python指标：目录加载失败，已跳过')
+    return
+  }
+  const items = catalog.items || []
+
+  const applied = []
+  const skipped = []
+  for (const { name, paramsRaw } of segs) {
+    const spec = items.find(it => norm(it.name) === norm(name))
+    if (!spec) {
+      skipped.push(`${name}（目录中不存在）`)
+      continue
+    }
+    const userParams = (spec.params || []).filter(p => p.annotation !== 'ndarray')
+
+    // data 特殊键：必须为段内第一个键，值不含 ; 与 |（复合表达式请用面板配置）
+    let data = ''
+    let rest = (paramsRaw || '').trim()
+    if (rest.startsWith('data=')) {
+      const semi = rest.indexOf(';')
+      if (semi < 0) { data = rest.slice(5); rest = '' }
+      else { data = rest.slice(5, semi); rest = rest.slice(semi + 1) }
+      if (data.includes('|') || data.includes(';')) {
+        skipped.push(`${name}（data 表达式不能包含 ; 与 |，请用面板配置复合表达式）`)
+        continue
+      }
+    }
+
+    let named = null
+    if (rest) {
+      named = parseNamedParams(rest)
+      if (!named) {
+        skipped.push(`${name}（参数段格式不合法，应为 参数名=值;参数名=值）`)
+        continue
+      }
+    }
+    let mainFlag = false
+    if (named) {
+      const m = named.find(np => np.name === 'main')
+      if (m) {
+        const b = parseBool3(m.value)
+        if (b !== null) mainFlag = b
+        else {
+          skipped.push(`${name}（main 值不合法：1/0/true/false）`)
+          continue
+        }
+      }
+      named = named.filter(np => np.name !== 'main')
+    }
+    // 未知参数名 → 跳过该指标（与买卖提示行为一致）
+    let ok = true
+    if (named) {
+      for (const np of named) {
+        if (!userParams.find(p => norm(p.name) === norm(np.name))) {
+          skipped.push(`${name}（参数 ${np.name} 不在定义中）`)
+          ok = false
+          break
+        }
+      }
+    }
+    if (!ok) continue
+
+    // 按目录定义顺序构造位置式参数数组（未列出的用默认值）
+    const params = []
+    for (const p of userParams) {
+      const np = named && named.find(n => norm(n.name) === norm(p.name))
+      if (!np) {
+        params.push(p.default !== undefined && p.default !== null
+          ? p.default
+          : (p.annotation === 'bool' ? false : (p.annotation === 'str' ? '' : 0)))
+        continue
+      }
+      const val = parsePyParamValue(p.annotation, np.value)
+      if (val === undefined) {
+        skipped.push(`${name}（参数 ${np.name}=${np.value} 不合格）`)
+        ok = false
+        break
+      }
+      params.push(val)
+    }
+    if (!ok) continue
+
+    applied.push({ name: spec.name, params, data, onMainChart: mainFlag })
+  }
+
+  if (skipped.length) {
+    console.warn('[URL] Python指标跳过不合格指标:', skipped)
+    ElMessage.warning(`URL Python指标跳过 ${skipped.length} 个：${skipped.join('；')}`)
+  }
+  if (!applied.length) return
+
+  const searchStore = useSearchParametersStore()
+  searchStore.setPythonIndicators(applied)
+  ElMessage.success(`URL Python指标：启用 ${applied.length} 个（${applied.map(it => it.name).join('、')}）`)
+}
+
 // ---------- 主入口 ----------
 
 /**
@@ -530,6 +666,10 @@ export function applyUrlParams(ctx = {}) {
   // 买卖提示（异步：先拉目录 → 校验参数 → 提交信号）
   const ls = params.get('ls')
   if (ls) applyLongShortFromUrl(ls, ctx)
+
+  // Python 指标（异步：先拉目录 → 校验参数 → 写入 store，K线加载回调渲染）
+  const pyInd = params.get('pyInd')
+  if (pyInd) applyPyIndFromUrl(pyInd)
 
   // 加载 pybroker 订单
   if (truthy(params.get('trades')) && typeof ctx.loadTradingSignals === 'function') {
