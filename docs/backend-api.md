@@ -596,8 +596,8 @@ window.__pyInd = {
 **Alpha101 横截面因子（`stocks` 多股票注入）**：
 
 - 实现：`Indicator/alpha101/` 100 个横截面因子（alpha002~alpha101，源自原 `use_packages/Quant_Alpha101`，use_packages 已删除）；`KLineForm/managerTool.py` 的 `StocksData` 容器（`{symbol: {field: 等长数值序列}}`，至少 close）；选股适配层 `KLineForm/StockSelectionStrategy/alpha101`（`select_stocks(stocks, factor, top_n, **params) -> [(symbol, score)]` 按最新因子值降序、预热期 NaN 排末尾，`rank_stocks` 别名，`list_factors()`）
-- 签名：`def alpha0XX(<data: np.ndarray>, <数值参数>, stocks: Optional[StocksData] = None) -> np.ndarray`；data 参数（open/high/low/close/volume/vwap/returns/cap/advN 等）`1D`=单股票、`2D`=多股票（行=日期，列=股票）；返回 1D 等长 或 2D（行=日期，列=股票，预热期 NaN）
-- 后端注入：StocksData 注解参数在 `signature` 中标记 `kind='stocks'`（前端参数表隐藏、不占 `params`）；签名含 stocks 时按 URL `stocks` 逐票 `fetch_kline_df` 拉 K 线，公共交易日 reindex 对齐（停牌日 NaN），推导 `vwap=amount/(volume*100)`、`returns=close 日收益`、`advN=volume 滚动 N 日均量`、**`cap=市值自动注入`**（优先 `get_gpjy_value` 股票交易数据项 **GP16=总市值（万元）** → 转元，按公共交易日对齐、缺日 NaN；GP16 缺失时回退 `get_gb_info_by_date` 日频股本 × 当日不复权收盘价，股本 ffill、停牌 NaN；默认总市值口径，需流通市值改乘 Ltgb）后组装 StocksData 注入，data 参数置 None 由因子内部构建横截面 DataFrame；**单股票路径**签名含 `cap` data 参数时同样自动注入（与 K 线等长）
+- 签名：`def alpha0XX(<data: np.ndarray>, <数值参数>, stocks: Optional[StocksData] = None) -> np.ndarray`；data 参数（open/high/low/close/volume/vwap/returns/advN 等）`1D`=单股票、`2D`=多股票（行=日期，列=股票）；FN 编号参数（`fn238` 等，`kind='fin'`）=财务字段自动注入；返回 1D 等长 或 2D（行=日期，列=股票，预热期 NaN）
+- 后端注入：StocksData 注解参数在 `signature` 中标记 `kind='stocks'`（前端参数表隐藏、不占 `params`）；签名含 stocks 时按 URL `stocks` 逐票 `fetch_kline_df` 拉 K 线，公共交易日 reindex 对齐（停牌日 NaN），推导 `vwap=amount/(volume*100)`、`returns=close 日收益`、`advN=volume 滚动 N 日均量`，并注入签名 `kind='fin'` 的 FN 财务字段（`fn238` 等，`fetch_financial_df` 公告日阶梯对齐公共日；存量字段 FN238/FN239 不 TTM、其余滚动 TTM）后组装 StocksData 注入，data/fin 参数置 None 由因子内部构建横截面 DataFrame；**市值不再后端注入**——cap 由因子函数内部计算（`cap = fn238 × close`，fn238 = 通达信 FN238 总股本）；**单股票路径**签名含 `fn238` 等 fin 参数时同样自动注入（与 K 线等长）
 - 返回多线：因子 2D `(n_dates, n_stocks)` 转置为 `(n_stocks, n_dates)` 后走多线协议——**每只股票一条线**（line0/line1…）；JS 输出新增 `"stocks"` 字段（实际注入的股票列表）
 
 ### 7.3 复合序列数据表达式（data 参数）语法
