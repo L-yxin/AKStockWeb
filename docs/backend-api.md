@@ -549,6 +549,7 @@
 | `adjust_type` | 否 | 复权 `none/front/back`，默认 `none` |
 | `params` | 否 | 指标参数，英文逗号分隔（跳过数据参数；不足补默认、超限报错）。按签名转换：int/float 数字、bool（0/1、true/false）、**str 原样**（如 `t_pivot_r` 的 `params=3,classic`） |
 | `data` | 否 | **复合序列数据表达式**（URL 编码，见 7.3）。空 → 后端按 `data_param` 默认列 |
+| `stocks` | 否 | **多股票代码列表**（英文逗号分隔，如 `600000.SH,000001.SZ`）。仅对签名含 `stocks` 参数（StocksData 注解，如 Indicator/alpha101 横截面因子）的指标生效：后端按签名需要的字段拉取多股票 K 线自动注入；不传时以 `code` 单标的兜底（横截面 rank 退化为常数） |
 | `refresh` | 否 | `1` 强制重算（跳过 5min/20 条缓存），默认 `0` |
 | `start` / `end` | 否 | 起止日期 `YYYY-MM-DD` |
 
@@ -591,6 +592,13 @@ window.__pyInd = {
 
 - 前端 `src/chart/indicators/pyInd.js` 按 `lines` 注册多条 figure（调色盘分色），主图/副图均可叠加
 - 复合表达式中引用多线指标：按行拆 tuple，`a=platform_box(...)` 默认取第一行，`a[1]` 取第二行（与 talib 多输出一致）
+
+**Alpha101 横截面因子（`stocks` 多股票注入）**：
+
+- 实现：`Indicator/alpha101/` 100 个横截面因子（alpha002~alpha101，源自原 `use_packages/Quant_Alpha101`，use_packages 已删除）；`KLineForm/managerTool.py` 的 `StocksData` 容器（`{symbol: {field: 等长数值序列}}`，至少 close）；选股适配层 `KLineForm/StockSelectionStrategy/alpha101`（`select_stocks(stocks, factor, top_n, **params) -> [(symbol, score)]` 按最新因子值降序、预热期 NaN 排末尾，`rank_stocks` 别名，`list_factors()`）
+- 签名：`def alpha0XX(<data: np.ndarray>, <数值参数>, stocks: Optional[StocksData] = None) -> np.ndarray`；data 参数（open/high/low/close/volume/vwap/returns/cap/advN 等）`1D`=单股票、`2D`=多股票（行=日期，列=股票）；返回 1D 等长 或 2D（行=日期，列=股票，预热期 NaN）
+- 后端注入：StocksData 注解参数在 `signature` 中标记 `kind='stocks'`（前端参数表隐藏、不占 `params`）；签名含 stocks 时按 URL `stocks` 逐票 `fetch_kline_df` 拉 K 线，公共交易日 reindex 对齐（停牌日 NaN），推导 `vwap=amount/(volume*100)`、`returns=close 日收益`、`advN=volume 滚动 N 日均量`、**`cap=市值自动注入`**（优先 `get_gpjy_value` 股票交易数据项 **GP16=总市值（万元）** → 转元，按公共交易日对齐、缺日 NaN；GP16 缺失时回退 `get_gb_info_by_date` 日频股本 × 当日不复权收盘价，股本 ffill、停牌 NaN；默认总市值口径，需流通市值改乘 Ltgb）后组装 StocksData 注入，data 参数置 None 由因子内部构建横截面 DataFrame；**单股票路径**签名含 `cap` data 参数时同样自动注入（与 K 线等长）
+- 返回多线：因子 2D `(n_dates, n_stocks)` 转置为 `(n_stocks, n_dates)` 后走多线协议——**每只股票一条线**（line0/line1…）；JS 输出新增 `"stocks"` 字段（实际注入的股票列表）
 
 ### 7.3 复合序列数据表达式（data 参数）语法
 
@@ -666,3 +674,4 @@ a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL
 | 2026-10-11 | **标记分组隔离**：买卖提示（`ls`）/ pybroker 订单（`trades`）/ 信号表现分析（`sa`）/ 模拟交易（`sim`）四类 K 线标记改用 klinecharts `groupId` 分组（`createOverlay({groupId})` + `removeOverlay({groupId})`），各功能开启/清除互不影响，相互独立开关；股票切换等全量场景仍全清（`clearAllMarkers` 不传组） |
 | 2026-10-11 | **热更新排除**：新增 `webapi/run_server.py` 启动脚本（`uvicorn.run(reload_excludes=[...])`），排除 `stockSelection / Strategy / test / use_packages / MarketSentiment / webapi/test` 目录的改动触发后端重载；规避命令行 `--reload-exclude "**"` 在 Windows 终端被通配符展开的报错 |
 | 2026-10-11 | **URL 双重编码兼容**：`src/urlParams.js` 新增幂等安全解码 `safeExtraDecode`（仅当串仍含 `%xx` 时再解一次，明文/单次编码 URL 不受影响），应用于 `parseIndicators` 与 `parseLsParam`——修复 URL 整段被二次编码（如 `%25E6...`、`%7C`）时中文指标名匹配不到、提示"目录中不存在"的问题；`tool/make_akstock_url.py` 本身为单次编码（正确），无需改动 |
+| 2026-10-18 | Alpha101 横截面因子迁移：新增 `Indicator/alpha101/`（100 个横截面因子 alpha002~alpha101，源自原 `use_packages/Quant_Alpha101`，use_packages 已删除）；`KLineForm/managerTool.py` 新增 `StocksData` 多股票行情容器（`{symbol:{field:等长序列}}`）；`/api/pyInd/{name}.js` 新增可选 `stocks` 参数（逗号分隔股票代码）——StocksData 注解参数注册为 `kind='stocks'`（前端隐藏、不占 params），后端按签名需要字段拉多股票 K 线、公共交易日对齐（停牌 NaN）并推导 vwap/returns/advN 自动注入，2D 返回转置为按股多线（每线一只股票）、JS 输出新增 `stocks` 字段；新增选股适配层 `KLineForm/StockSelectionStrategy/alpha101`（select_stocks/rank_stocks/list_factors，按最新因子值降序） |
