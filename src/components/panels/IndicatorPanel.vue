@@ -98,6 +98,7 @@ const syncParamsFromChart = () => {
   if (!indicators.length) return
   indicators.forEach(ind => {
     if (!ind || !ind.name) return
+    // if (ind.name.startsWith('pyInd_')) return
     const calcParams = toParamsArray(ind.calcParams)
     if (!K_lineTechnicalIndicators[ind.name]) {
       K_lineTechnicalIndicators[ind.name] = { enabled: false, onMainChart: false, params: [] }
@@ -133,18 +134,19 @@ const resetTechnicalIndicators = () => {
 }
 resetTechnicalIndicators()
 
-// 挂载后图表实例必然就绪，再同步一次 klinecharts API 的真实指标参数。
-// kLineView 的指标重放随数据加载异步完成，getIndicators 在重放完成前可能不完整，
-// 故短间隔重试若干次，保证面板拿到的是图表上最终的真实 calcParams。
+
+// ✅ 事件驱动：首次挂载同步 + 监听 searchStore.indicatorsVersion
 onMounted(() => {
-  let tries = 0
-  const trySync = () => {
-    syncParamsFromChart()
-    tries++
-    if (tries < 15) setTimeout(trySync, 250)
-  }
-  trySync()
+  // 首次挂载：如果图表上已有指标（用户二次打开面板），立即回填
+  nextTick(() => syncParamsFromChart())
 })
+
+// kLineView 每次 K 线重载完成所有指标重放后会 bump indicatorsVersion，
+// 这里 watch 它再同步一次；drawer 每次打开是独立实例，watch 在 onUnmounted 自动清理
+watch(
+  () => searchStore.indicatorsVersion,
+  () => { nextTick(() => syncParamsFromChart()) }
+)
 
 // ---------- 参数编辑 ----------
 const dialogVisible = ref(false)

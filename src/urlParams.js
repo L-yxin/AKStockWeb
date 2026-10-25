@@ -673,7 +673,11 @@ export function applyUrlParams(ctx = {}) {
 
   // 加载 pybroker 订单
   if (truthy(params.get('trades')) && typeof ctx.loadTradingSignals === 'function') {
-    ctx.loadTradingSignals()
+    const symbolAtReg = searchStore.symbol
+    searchStore.onceKlineLoaded(() => {
+      if (searchStore.symbol !== symbolAtReg) return  // 标的已变，放弃本次
+      ctx.loadTradingSignals()
+    })
   }
 
   // 云指标：仅刷新（列表 + K线叠加缓存），不打开面板

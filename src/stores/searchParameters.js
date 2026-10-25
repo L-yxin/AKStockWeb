@@ -117,7 +117,18 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
     })
     ElMessage.success('参数校验通过，开始加载数据')
   }
-
+   let klineLoadedQueue = []
+  const onceKlineLoaded = (fn) => {
+    if (typeof fn === 'function') klineLoadedQueue.push(fn)
+  }
+  const notifyKlineLoaded = () => {
+    const q = klineLoadedQueue.splice(0)
+    q.forEach(fn => {
+      try { fn() } catch (e) { console.warn('[kline-loaded] 回调异常:', e) }
+    })
+  }
+   const indicatorsVersion = ref(0)
+  const bumpIndicatorsVersion = () => { indicatorsVersion.value++ }
   return {
     symbol,
     startDate,
@@ -139,6 +150,10 @@ export const useSearchParametersStore = defineStore('searchParameters', () => {
     removeOnLoadEvent,
     onLoad,
     // 导出校验方法（组件可单独调用）
-    validateParameters
+    validateParameters,
+    onceKlineLoaded,
+    notifyKlineLoaded,
+     indicatorsVersion,
+    bumpIndicatorsVersion,
   }
 })

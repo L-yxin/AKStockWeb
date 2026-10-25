@@ -14,7 +14,14 @@ import { useSearchParametersStore } from '@/stores/searchParameters'
 const dataCache = new Map()
 // 已注册的指标模板名（registerIndicator 为全局注册，同名只注册一次）
 const registeredNames = new Set()
-
+const MAX_CACHE = 32;
+function cachePut(key, value) {
+  dataCache.set(key, value)
+  if (dataCache.size > MAX_CACHE) {
+    const firstKey = dataCache.keys().next().value
+    dataCache.delete(firstKey)
+  }
+}
 // 多线配色盘（单线仍用按名哈希色）
 const PALETTE = ['#FFB74D', '#4FC3F7', '#81C784', '#BA68C8', '#FF8A65', '#4DD0E1', '#AED581', '#F06292']
 
@@ -80,10 +87,11 @@ export async function applyPyIndicator(chart, { name, params = [], data = '', on
   const paramsStr = (Array.isArray(params) ? params : [])
     .map(v => v === true ? '1' : v === false ? '0' : v)
     .join(',')
-  const key = `${name}|${data}|${paramsStr}|${code}|${period}|${adjust}`
-
   const store = useSearchParametersStore()
   const symbolAtStart = code
+  const startKey = store.startDate || ''
+  const endKey = store.endDate || ''
+  const key = `${name}|${data}|${paramsStr}|${code}|${period}|${adjust}|${startKey}|${endKey}`
   const jsText = await fetchPyIndicatorJs(name, paramsStr, {
     code, period, adjust, data, refresh: refresh ? 1 : 0,
     start: store.startDate || '', end: store.endDate || '',
@@ -107,7 +115,7 @@ export async function applyPyIndicator(chart, { name, params = [], data = '', on
     raw.data.forEach(d => { if (d && d.value != null) map.set(d.timestamp, d.value) })
     lines.push({ key: 'value', title: name, map })
   }
-  dataCache.set(key, { lines })
+  cachePut(key, { lines })
 
   const indName = `pyInd_${name}`
   if (!registeredNames.has(indName)) {

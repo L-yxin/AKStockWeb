@@ -671,6 +671,7 @@ const initChart = () => {
             && timestampToDateStr(bars[0].timestamp) <= searchStore.startDate
           callback(bars, { forward: bars.length > 0 && !reachedUserStart, backward: false })
           onSimulationDataArrived()
+          searchStore.notifyKlineLoaded()
           return
         }
 
@@ -772,16 +773,26 @@ const initChart = () => {
 
   // Python 指标重放：K线对象重建后恢复用户已应用的 Python 指标
   // （数据由后端计算，异步拉取 JS 后注册，失败不影响图表主体）
-  searchStore.pythonIndicators.forEach((it) => {
-    applyPyIndicator(chart.value, {
+    // Python 指标重放：K线对象重建后恢复用户已应用的 Python 指标
+  // （K 线技术指标重放是同步的；Python 指标重放是异步的，需等全部完成后再通知面板，
+  //   否则面板会读到"指标还没建完"的状态，导致 calcParams 缺项）
+  const pyIndPromises = searchStore.pythonIndicators.map((it) => {
+    return applyPyIndicator(chart.value, {
       ...it,
       code: searchStore.symbol,
       period: periodToBackend(searchStore.period),
       adjust: searchStore.adjust_type,
     })
-      .then(id => { if (!id) console.warn(`Python指标重放失败(同名已存在?): ${it.name}`) })
-      .catch(e => console.error(`Python指标 ${it.name} 重放失败:`, e))
+      .then(id => { if (!id) console.warn(`Python指标重放失败(同名已存在?): ${it.name}`); return id })
+      .catch(e => { console.error(`Python指标 ${it.name} 重放失败:`, e); return null })
   })
+
+  if (pyIndPromises.length) {
+    Promise.allSettled(pyIndPromises).then(() => searchStore.bumpIndicatorsVersion())
+  } else {
+    // 无 pyInd → K 线技术指标同步重放已就绪，立即通知
+    searchStore.bumpIndicatorsVersion()
+  }
 
   // 模拟交易进行中：K线对象重建（切换标的/重新加载）后重放交易记录标记
   const simStore = useSimulationStore()
