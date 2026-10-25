@@ -67,7 +67,7 @@ const MENUS = [
   { sep: true },
   { key: 'buyingAndSellingIndicator', label: '买卖提示指标', icon: Bell, action: 'lsDialog' },
   { sep: true },
-  { key: 'loadTrades', label: '加载pybroker订单', icon: Download, action: 'loadTrades' },
+  { key: 'loadTrades', label: '加载回测订单', icon: Download, action: 'loadTrades' },
   { sep: true },
   { key: 'signalAnalyze', label: '信号表现分析', icon: DataAnalysis, action: 'signalPanel' },
   { sep: true },

@@ -134,7 +134,8 @@ const isEditableFocus = () => {
   if (!el) return false
   const tag = el.tagName
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' ||
-    el.isContentEditable || el.closest?.('.el-select') || el.closest?.('.el-input')
+    el.isContentEditable || el.closest?.('.el-select') || el.closest?.('.el-input') ||
+    el.closest?.('.monaco-editor')  // 代码编辑器（QuantEditor）内部不触发键盘搜索
 }
 
 // ---------- 键盘监听 ----------

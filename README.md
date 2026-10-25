@@ -107,12 +107,14 @@ akstock/
     ├── router/
     │   └── index.js           # 路由（/ → home.vue，/settings → Settings.vue，/admin → AdminPanel.vue）
     ├── stores/                # Pinia 状态管理
-    │   ├── searchParameters.js    # 搜索参数（标的/日期/复权/周期/已启用指标/多空信号）
+    │   ├── searchParameters.js    # 搜索参数（标的/日期/复权/周期/已启用指标/多空信号/Python 指标）
     │   ├── simulationStore.js      # 模拟交易状态机（逐根跳柱/持仓/盈亏/成交记录）
     │   ├── cloudMetricStore.js     # 云指标列表状态
+    │   ├── sectorStore.js          # 板块/自选激活状态（滚轮切换）
     │   └── setting.js              # 设置（价格小数位数，localStorage 持久化）
     ├── config/
     │   └── indicatorDefaults.js   # 指标默认参数 + 默认启用列表
+    ├── urlParams.js           # URL 深链参数应用（code/ls/trades/pyInd 等，双编码安全解码）
     ├── chart/
     │   ├── indicators/         # 自定义 klinecharts 指标（副作用模块，引入即注册）
     │   │   ├── index.js            # 注册入口（批量 import）
@@ -120,18 +122,24 @@ akstock/
     │   │   ├── highLowPoints.js    # 相对高低点（HL / RelativeHighPoints / RelativeLowPoints）
     │   │   ├── volumeNewLowDays.js # 成交量距上次更低量天数
     │   │   ├── continuousChange.js # 阶梯线连续涨跌计数
-    │   │   └── cloudMetrics.js     # 云指标（REST 拉取已上传多列 DataFrame，K线叠加）
+    │   │   ├── cloudMetrics.js     # 云指标（REST 拉取已上传多列 DataFrame，K线叠加）
+    │   │   └── pyInd.js            # Python 指标（后端计算返回 JS，动态注册，`data` 复合序列）
     │   ├── markers.js           # 交易信号标记（addMarkers / clearAllMarkers / mesMap）
     │   └── overlays.js          # 自定义覆盖图（simpleAnnotation2 买卖注解 / textTip 文字标注）
     ├── components/
     │   ├── home.vue             # 主布局（顶栏/菜单栏/K线区/模拟交易侧栏/功能抽屉）
-    │   ├── Settings.vue         # 设置页（数据源切换 / 价格小数位数）
+    │   ├── Settings.vue         # 设置页（数据源切换 / 价格小数位数 / 后台管理入口）
+    │   ├── KeyboardSearch.vue   # 全局键盘股票搜索（代码/名称/拼音，↑↓+Enter；编辑器聚焦自动屏蔽）
+    │   ├── QuantEditor.vue      # Monaco 代码编辑器（Python 语法高亮 + ta/ind/klf 补全 + hover 文档）
+    │   ├── CodeEditorDialog.vue # 代码编辑器弹窗（可拖拽/可缩放）
     │   └── panels/              # 功能面板（抽屉或侧栏挂载）
     │       ├── IndicatorPanel.vue        # K线技术指标管理（启用/主图/参数编辑）
     │       ├── LongShortIndicatorPanel.vue # 买卖提示指标（后端指标目录 + 参数配置 + 多空信号生成）
     │       ├── SignalQualityPanel.vue     # 信号表现分析（bool 信号序列 → 未来 N 根 K 线指标）
     │       ├── SimulationPanel.vue        # 模拟交易（初始化/逐根交易/成交记录/绩效报告）
-    │       └── CloudMetricPanel.vue       # 云指标查看（已上传列表 + ECharts 多折线）
+    │       ├── CloudMetricPanel.vue       # 云指标查看（已上传列表 + ECharts 多折线）
+    │       ├── PythonIndicatorPanel.vue   # Python 指标（清单 + 分步编辑器 + 已应用列表恢复/编辑/删除）
+    │       └── SectorPanel.vue            # 板块/自选（行业板块/指数成分/自选多组 + 滚轮切换）
     └── views/
         ├── kLineView.vue         # K线主组件（图表初始化/分页加载/十字光标/模拟遮挡/拖拽接管）
         └── SelectionDeviceView.vue # 顶栏选择器（标的搜索/日期范围/复权/加载按钮）
@@ -328,6 +336,17 @@ akstock/
   - **数据来源持久化**：设置页「数据来源」（通达信直拉 / 内存缓存）选择同样保存到
     `setting.json`，应用启动时自动恢复（`App.vue`），刷新页面不丢失
 
+### 11. 全局键盘股票搜索（`KeyboardSearch.vue`）
+
+- 任意界面直接按**字母 / 数字**即弹出搜索浮层（`↑↓` 选择 · `Enter` 确认 · `Esc` 关闭），
+  匹配 **代码 / 名称 / 拼音**（全拼·首字母，`pinyin-pro` 分片构建索引不阻塞 UI）
+- 确认后切换 `searchStore.symbol` 并触发加载（`searchStore.onLoad()`）
+- **编辑器/输入控件屏蔽**：焦点在 `INPUT/TEXTAREA/SELECT`、Element 输入组件、
+  contentEditable 或 **Monaco 代码编辑器（`.monaco-editor`，QuantEditor）内部**时，
+  按键全部交给当前控件（`isEditableFocus()` 识别，不触发/不干扰搜索；
+  若搜索浮层已弹出，`Esc` 仍可关闭）——解决"编辑代码时误触发股票搜索"
+- 无输入 2 秒自动隐藏重置；窗口失焦（`blur`）自动关闭
+
 ---
 
 ## 状态管理（Pinia）
@@ -343,6 +362,7 @@ akstock/
 | `enabledIndicators` | 已启用技术指标 `[{name, calcParams, onMainChart}]` |
 | `longShortSignals` | 多空信号列表（买卖提示指标生成，供模拟交易使用） |
 | `pythonIndicators` | 已应用 Python 指标 `[{name, params, data, onMainChart}]`（含复合序列 data 表达式） |
+| `dataSource` | K 线数据来源：`tq` 通达信直拉（默认）/ `cache` 后端内存缓存；设置页切换并持久化到 `setting.json` |
 | `onLoadEvent` | 加载事件 Map，点击"加载数据"时依次执行 |
 | `validateParameters()` | 参数校验（标的非空/日期合法/结束≥开始/复权合法） |
 | `onLoad()` | 校验通过后执行所有加载事件 |
@@ -412,13 +432,25 @@ base_http_url = "http://localhost:8000"
 | DELETE | `/api/cloudMetrics/delete` | 删除云指标 |
 | POST | `/api/trades_csv` | 上传交易记录 CSV（pybroker 订单） |
 | POST | `/api/signalAnalyze` | K 线信号表现分析（bool 信号 → 未来 N 根 K 线指标，SignalQualityPanel） |
+| GET | `/api/pyInd/list` | Python 指标清单 + talib 函数（PythonIndicatorPanel） |
+| GET | `/api/pyInd/{name}.js` | 计算 Python 指标（`data` 复合序列 / `stocks` 多股票，pyInd.js） |
+| GET | `/api/pyCodeCompletions` | Monaco 补全名单（ta/ind/klf，QuantEditor） |
+| GET | `/api/pyCodeDoc` | Monaco hover 文档（签名 + docstring，QuantEditor） |
 | GET | `/api/sectors/list` | 板块分组列表（`type=sector|index|watchlist`） |
 | GET | `/api/sectors/stocks` | 分组成分股（`type` + `id`） |
 | GET | `/api/sectors/watchlist` | 全部自选组（含明细，本地多组缓存） |
-| POST | `/api/sectors/watchlist` | 自选管理（create / add / remove / rename / delete） |
+| POST | `/api/sectors/watchlist` | 自选管理（create 自定义 id / add 批量 / remove / rename / delete） |
+| GET | `/api/v1/stocks/{symbol}` | 内存缓存：单标的 K 线（懒加载，`source=cache`） |
+| POST | `/api/v1/stocks/batch` | 内存缓存：批量 K 线（分片批量拉取，错误隔离） |
+| POST | `/api/v1/cache/warmup` | 内存缓存：后台预热（立即返回 task_id，不阻塞） |
+| GET | `/api/v1/cache/warmup/status` | 内存缓存：预热进度轮询 |
+| GET | `/api/v1/cache/stats` | 内存缓存：状态（entries/used_gb/utilization，Settings） |
+| DELETE | `/api/v1/cache/{symbol}` / `/api/v1/cache` | 内存缓存：失效单标的 / 清空 |
+| GET/POST | `/api/admin/preload*` | 后台管理：数据预加载（plan/sources/groups，AdminPanel） |
+| GET/POST | `/api/admin/settings` | 后台管理：预加载选择 + 缓存策略 + 数据源持久化 |
 | GET | `/api/health` | 健康检查 |
 
-REST 封装函数：`uploadCloudMetric` / `listCloudMetrics` / `getCloudMetric` / `deleteCloudMetric` / `signalAnalyze` / `getSectorGroups` / `getSectorStocks` / `watchlistOp` / `getWatchlist`。
+REST 封装函数：`uploadCloudMetric` / `listCloudMetrics` / `getCloudMetric` / `deleteCloudMetric` / `signalAnalyze` / `getSectorGroups` / `getSectorStocks` / `watchlistOp` / `getWatchlist` / `getCacheStats` / `clearCache` / `evictCacheSymbol` / `getCachedKline` / `getPreloadPlan` / `runPreload` / `getCacheConfig` / `setCacheConfig`。
 
 ---
 

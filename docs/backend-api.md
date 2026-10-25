@@ -76,6 +76,23 @@
 | `GET /api/pyCodeCompletions`        | REST | Monaco 编辑器补全名单（ta/ind/klf） | `src/components/QuantEditor.vue` |
 | `GET /api/pyCodeDoc?ns=&name=`       | REST | Monaco hover 文档（签名+docstring） | `src/components/QuantEditor.vue` |
 | `GET /api/cloudMetrics/get?name=&start=&end=` | REST | 云指标折线数据（多列不同颜色） | `src/chart/indicators/cloudMetrics.js` |
+| `POST /api/cloudMetrics/upload` | REST | 上传云指标 DataFrame（Python 端 postCloudMetrics） | `src/components/panels/CloudMetricPanel.vue` |
+| `GET /api/cloudMetrics/list` | REST | 列出已上传云指标 | `src/components/panels/CloudMetricPanel.vue` |
+| `DELETE /api/cloudMetrics/delete` | REST | 删除云指标 | `src/components/panels/CloudMetricPanel.vue` |
+| `POST /api/trades_csv` | REST | 上传交易记录 CSV（pybroker 订单 → K线买卖标记） | `src/components/home.vue` / 策略脚本 |
+| `GET /api/sectors/list` | REST | 分组列表（`type=sector\|index\|watchlist`） | `src/components/panels/SectorPanel.vue` |
+| `GET /api/sectors/stocks` | REST | 分组成分股（`type` + `id`） | `src/components/panels/SectorPanel.vue` |
+| `GET /api/sectors/watchlist` | REST | 全部自选组（含 codes 明细，本地多组缓存） | `src/components/panels/SectorPanel.vue` |
+| `POST /api/sectors/watchlist` | REST | 自选管理（create / add 批量 / remove / rename / delete） | `src/components/panels/SectorPanel.vue` |
+| `GET /api/v1/stocks/{symbol}` | REST | 内存缓存：单标的 K 线（懒加载，`source=cache` 时） | `src/views/kLineView.vue` |
+| `POST /api/v1/stocks/batch` | REST | 内存缓存：批量 K 线（分片批量拉取，错误隔离） | 回测/预热脚本 |
+| `POST /api/v1/cache/warmup` | REST | 内存缓存：后台预热（立即返回 task_id，不阻塞） | `src/components/AdminPanel.vue` |
+| `GET /api/v1/cache/warmup/status` | REST | 内存缓存：预热进度轮询（running/loaded/failed） | 预热调用方 |
+| `GET /api/v1/cache/stats` | REST | 内存缓存：状态（entries/used_gb/utilization） | `src/components/Settings.vue` |
+| `DELETE /api/v1/cache/{symbol}` \| `DELETE /api/v1/cache` | REST | 内存缓存：失效单标的 / 清空 | `src/components/Settings.vue` |
+| `GET/POST /api/admin/preload*` | REST | 后台管理：数据预加载（plan/sources/groups） | `src/components/AdminPanel.vue` |
+| `GET/POST /api/admin/settings` | REST | 后台管理：预加载选择 + 缓存策略 + 数据源持久化（`data/setting.json`） | `src/components/AdminPanel.vue` |
+| `GET /api/health` | REST | 健康检查 | 运维 |
 
 
 
@@ -496,6 +513,8 @@
 - **开发模式热重载**：每次执行前 `importlib.reload(ind)` 与 `importlib.reload(klf)`，改 `.py` 文件不用重启 FastAPI（numba @njit 首次 reload 重新 JIT 编译，后续命中缓存）
 - 用户代码写法：函数体形式，`return ta.RSI(c, 9) < 30`
 
+**键盘搜索屏蔽**（前端行为）：全局键盘股票搜索（`KeyboardSearch.vue`）通过 `isEditableFocus()` 识别焦点元素——`INPUT/TEXTAREA/SELECT/contentEditable/.el-select/.el-input` 及 **`.monaco-editor` 内部**（代码编辑器）均不触发搜索；焦点在 QuantEditor 内按字母/数字键仅交给编辑器（Esc 仍可关闭已弹出的搜索浮层）。
+
 ***
 ## 7. Python 指标（pyInd）REST API
 
@@ -649,7 +668,63 @@ a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL
 
 ***
 
-## 8. 变更记录
+## 8. 板块 / 自选 REST API
+
+> 板块 / 指数成分来自通达信（本地缓存 24h）；**自选由 webapi 本地管理**（`webapi/data/watchlist.json`，支持多组），不依赖通达信客户端自选。
+
+### 8.1 `GET /api/sectors/list` —— 分组列表
+
+`?type=sector|index|watchlist`
+- `sector`：通达信全部 A 股行业板块 `[{id, name, count}]`
+- `index`：指数分组 `[{id, name, count}]`（上证指数/沪深300/中证500/中证1000/国证2000/中证2000/中证A500/创业板/科创板/北交所）
+- `watchlist`：本地自选组 `[{id, name, count}]`（首次访问自动补建「默认自选」）
+
+### 8.2 `GET /api/sectors/stocks` —— 分组成分股
+
+`?type=sector|index|watchlist&id=xxx` → `{code:0, type, id, items:[{code, name}]}`；未知自选组 → 404。
+
+### 8.3 自选管理 `GET/POST /api/sectors/watchlist`
+
+**`GET`**：全部自选组（含 codes 明细）：
+
+```json
+{"code":0, "groups":[
+  {"id":"wl_1a2b3c4d", "name":"默认自选", "codes":[{"code":"600519.SH","name":"贵州茅台"}]}
+]}
+```
+
+**`POST`**，body 带 `action`：
+
+| action | body | 说明 |
+|---|---|---|
+| `create` | `{name, id?}` | 新建自选组，返回 `{group:{id,name,count}}`；`id` 可选（脚本上传自定义 id，如 `xg_` 前缀），缺省自动 `wl_` |
+| `add` | `{id, code, name}` 或 `{id, codes:[str \| {code,name}]}` | 加入股票（幂等），返回 `{count, added}`；`codes` 批量一次提交 |
+| `remove` | `{id, code}` | 移出股票，返回 `{count}` |
+| `rename` | `{id, name}` | 组改名 |
+| `delete` | `{id}` | 删除整组 |
+
+**选股结果上传脚本**：`webapi/webtool/upload_watchlist/upload_watchlist.py`（`upload_watchlist(name, codes, mode="api"|"file", ...)`）——`api` 模式走本接口（create 自定义 `xg_` id + codes 批量 add，同名/同 id 幂等）；`file` 模式直接读写 `watchlist.json`（后端未启动可用）。详见 `webapi/api_docs.md`。
+
+***
+
+## 9. 缓存服务 REST（批量 / 后台预热）
+
+> 进程内内存缓存（`webapi/stock_cache.py`，单进程单 worker 必须 `--workers 1`）；键 `(symbol, period, adjust)`，TTL 30min / 预算 10GiB（可调），LRU 逐出 + 后台 sweeper。前端「数据来源 = 内存缓存」时 `/ws/kline` 传 `source=cache` 走本服务。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /api/v1/stocks/{symbol}` | 单标的 K 线（懒加载；`adjust`/`period`/`start`/`end`/`columns` 参数） |
+| `POST /api/v1/stocks/batch` | 批量 K 线：`{symbols, adjust, period, start, end, columns}` → `{results, errors}`；**分片批量拉取**（`fetch_kline_df_batch` 50 只/次 tqcenter 调用），单标的失败隔离 |
+| `POST /api/v1/cache/warmup` | 预热（**后台任务**）：`{symbols, periods, adjusts, start, end}` → **立即返回** `{code, task_id, queued, total, stats}`，不阻塞请求；运行中重复提交 `queued:false` |
+| `GET /api/v1/cache/warmup/status` | 预热进度：`{code, data:{running, task_id, total, loaded, failed, current, error}}` |
+| `GET /api/v1/cache/stats` | 状态：`{entries, used_gb, budget_gb, utilization, ttl_seconds, sweep_interval_seconds}` |
+| `DELETE /api/v1/cache/{symbol}` / `DELETE /api/v1/cache` | 失效单标的（所有复权/周期）/ 清空 |
+
+**并发约束（tqcenter）**：tqcenter 仅允许串行访问（非线程安全），后端全局信号量 `Semaphore(1)` 排队；所有 tq 任务只能排队（能优化则优化——批量拉取 / 缓存命中跳过 / 后台预热），**不使用 tq 的访问（缓存命中、文件、自选、静态）不受排队影响**。
+
+***
+
+## 10. 变更记录
 
 
 
@@ -682,3 +757,5 @@ a=talib.MACD(close,12,26,9)[1]; percent_change_nb(a)  # MACD 多输出取 SIGNAL
 | 2026-10-11 | **热更新排除**：新增 `webapi/run_server.py` 启动脚本（`uvicorn.run(reload_excludes=[...])`），排除 `stockSelection / Strategy / test / use_packages / MarketSentiment / webapi/test` 目录的改动触发后端重载；规避命令行 `--reload-exclude "**"` 在 Windows 终端被通配符展开的报错 |
 | 2026-10-11 | **URL 双重编码兼容**：`src/urlParams.js` 新增幂等安全解码 `safeExtraDecode`（仅当串仍含 `%xx` 时再解一次，明文/单次编码 URL 不受影响），应用于 `parseIndicators` 与 `parseLsParam`——修复 URL 整段被二次编码（如 `%25E6...`、`%7C`）时中文指标名匹配不到、提示"目录中不存在"的问题；`tool/make_akstock_url.py` 本身为单次编码（正确），无需改动 |
 | 2026-10-18 | Alpha101 横截面因子迁移：新增 `Indicator/alpha101/`（100 个横截面因子 alpha002~alpha101，源自原 `use_packages/Quant_Alpha101`，use_packages 已删除）；`KLineForm/managerTool.py` 新增 `StocksData` 多股票行情容器（`{symbol:{field:等长序列}}`）；`/api/pyInd/{name}.js` 新增可选 `stocks` 参数（逗号分隔股票代码）——StocksData 注解参数注册为 `kind='stocks'`（前端隐藏、不占 params），后端按签名需要字段拉多股票 K 线、公共交易日对齐（停牌 NaN）并推导 vwap/returns/advN 自动注入，2D 返回转置为按股多线（每线一只股票）、JS 输出新增 `stocks` 字段；新增选股适配层 `KLineForm/StockSelectionStrategy/alpha101`（select_stocks/rank_stocks/list_factors，按最新因子值降序） |
+| 2026-10-24 | **webapi 重构**：①`main.py`（842 行 → 入口 ~130 行）按功能拆分——`ws_common.py`（WS 收发/时间解析/交易记录缓存）、`ws_market.py`（kline/allSymbols/searchSymbols/syncData）、`ws_signals.py`（买卖提示/多空信号/交易信号标记）、`ws_evaluation.py`（两个评测）、`trades_api.py`、`cloud_api.py`、`pyind_api.py`、`misc_api.py`，URL/协议不变；②**缓存性能**——新增 `tq_client.fetch_kline_df_batch`（一次 tqcenter 调用拉 50 只，`_BATCH_SIZE=50`），`POST /api/v1/stocks/batch` 分片批量入缓存；`POST /api/v1/cache/warmup` 改**后台任务**（立即返回 `task_id`，重复提交 `queued:false`），新增 `GET /api/v1/cache/warmup/status` 轮询——消除逐只串行调用长时间霸占 tqcenter 拖慢其他接口；tqcenter 全局信号量 `Semaphore(1)` 串行约束不变 |
+| 2026-10-25 | ①**选股结果上传脚本**：新增 `webapi/webtool/upload_watchlist/`（`upload_watchlist(name, codes, mode="api"|"file", ...)`）——组 id 自动生成 `xg_` 前缀；api 模式走自选 REST（create 支持自定义 id + add 批量），file 模式直接读写 `watchlist.json`；同名/同 id 幂等（overwrite 覆盖）；②**自选接口增强**：`create` 支持可选 `id`（缺省 `wl_`），`add` 支持批量 `codes`（兼容单只）；③**键盘搜索屏蔽**：`KeyboardSearch.vue` 的 `isEditableFocus()` 新增 `.monaco-editor` 识别——焦点在 QuantEditor 内按键不再触发全局股票搜索 |
