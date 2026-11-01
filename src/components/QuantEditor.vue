@@ -1,32 +1,11 @@
 <!-- src/components/QuantEditor.vue -->
-<script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+<script lang="ts">
 import * as monaco from 'monaco-editor'
 import { getPyCodeCompletions, getPyCodeDoc } from '@/api'
 
 // ============================================================
-// Props / Emits
-// ============================================================
-const props = withDefaults(
-  defineProps<{
-    modelValue: string
-    language?: string
-    theme?: string
-    height?: string
-  }>(),
-  {
-    language: 'python',
-    theme: 'vs-dark',
-    height: '100%',
-  }
-)
-
-const emit = defineEmits<{
-  (e: 'update:modelValue', value: string): void
-}>()
-
-// ============================================================
-// 命名空间补全数据（ta / ind / klf）
+// 1. 模块级全局状态（提升到 setup 外部）
+// 保证组件反复挂载/卸载时，Provider 只注册一次，不叠加
 // ============================================================
 type Ns = 'ta' | 'ind' | 'klf'
 const NSS: readonly Ns[] = ['ta', 'ind', 'klf']
@@ -41,8 +20,15 @@ interface CompletionDef {
 
 const K = monaco.languages.CompletionItemKind
 const nsMap: Record<Ns, CompletionDef[]> = { ta: [], ind: [], klf: [] }
-
 let nsLoadPromise: Promise<void> | null = null
+
+// 防重复注册的锁
+let completionDispose: monaco.IDisposable | null = null
+let hoverDispose: monaco.IDisposable | null = null
+
+// 文档缓存
+const docCache = new Map<string, Promise<string>>()
+
 function ensureNsCompletions(): Promise<void> {
   if (nsLoadPromise) return nsLoadPromise
   nsLoadPromise = (async () => {
@@ -58,18 +44,12 @@ function ensureNsCompletions(): Promise<void> {
         }))
       }
     } catch {
-      nsLoadPromise = null // 允许下次重试
+      nsLoadPromise = null // 失败允许下次重试
     }
   })()
   return nsLoadPromise
 }
 
-// ============================================================
-// 工具：解析 `ta.` / `ind.` / `klf.` 上下文
-//  - ns:          命名空间
-//  - prefix:      `ns.` 之后、光标之前已输入的文本（可能含 `.`）
-//  - startColumn: 补全/hover 的替换起点（1-based）
-// ============================================================
 interface NsContext {
   ns: Ns
   prefix: string
@@ -82,7 +62,6 @@ function parseNsContext(
 ): NsContext | null {
   const line = model.getLineContent(position.lineNumber)
   const before = line.slice(0, position.column - 1)
-  // 前面必须是行首或 非标识符/非点，避免误匹配 `foo.ta.x`
   const m = before.match(/(?:^|[^\w.])(ta|ind|klf)\.([\w.]*)$/)
   if (!m) return null
   const ns = m[1] as Ns
@@ -105,16 +84,10 @@ function toSuggestion(
   }
 }
 
-// ============================================================
-// 补全 Provider（全局只注册一次）
-// ============================================================
-let completionDispose: monaco.IDisposable | null = null
-
 function registerCompletion(): void {
   if (completionDispose) return
   completionDispose = monaco.languages.registerCompletionItemProvider('python', {
     triggerCharacters: ['.'],
-
     async provideCompletionItems(model, position) {
       const ctx = parseNsContext(model, position)
       if (!ctx) return { suggestions: [] }
@@ -123,7 +96,6 @@ function registerCompletion(): void {
       const items = nsMap[ctx.ns]
       if (!items.length) return { suggestions: [] }
 
-      // 替换范围：从 `ns.` 之后到光标
       const range: monaco.IRange = {
         startLineNumber: position.lineNumber,
         endLineNumber: position.lineNumber,
@@ -131,7 +103,6 @@ function registerCompletion(): void {
         endColumn: position.column,
       }
 
-      // 前端先按前缀粗筛，减少返回量；Monaco 会再做二次模糊过滤
       const filtered = ctx.prefix
         ? items.filter((d) => d.label.startsWith(ctx.prefix))
         : items
@@ -140,11 +111,6 @@ function registerCompletion(): void {
     },
   })
 }
-
-// ============================================================
-// Hover Provider
-// ============================================================
-const docCache = new Map<string, Promise<string>>()
 
 function fetchDoc(ns: string, name: string): Promise<string> {
   const key = `${ns}.${name}`
@@ -161,21 +127,16 @@ function fetchDoc(ns: string, name: string): Promise<string> {
         if (doc) md += `\n\n---\n\n${doc}`
         return md
       }
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
     return ''
   })()
 
   docCache.set(key, p)
-  // 空结果不缓存，允许网络恢复后重试
   p.then((md) => {
     if (!md) docCache.delete(key)
   })
   return p
 }
-
-let hoverDispose: monaco.IDisposable | null = null
 
 function registerHover(): void {
   if (hoverDispose) return
@@ -184,12 +145,10 @@ function registerHover(): void {
       const ctx = parseNsContext(model, position)
       if (!ctx) return null
 
-      // 光标可能在符号中间：向后再读一段标识符
       const line = model.getLineContent(position.lineNumber)
       const after = line.slice(position.column - 1)
       const tail = (after.match(/^[\w.]*/) ?? [''])[0]
 
-      // 完整符号名，去掉尾部多余的点
       const fullName = (ctx.prefix + tail).replace(/\.+$/, '')
       if (!fullName) return null
 
@@ -208,10 +167,32 @@ function registerHover(): void {
     },
   })
 }
+</script>
+
+<script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 
 // ============================================================
-// 编辑器实例
+// 2. 组件级状态与实例
 // ============================================================
+const props = withDefaults(
+  defineProps<{
+    modelValue: string
+    language?: string
+    theme?: string
+    height?: string
+  }>(),
+  {
+    language: 'python',
+    theme: 'vs-dark',
+    height: '100%',
+  }
+)
+
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: string): void
+}>()
+
 const editorContainer = ref<HTMLElement>()
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
 let contentDispose: monaco.IDisposable | null = null
@@ -220,7 +201,7 @@ let isSettingValue = false // 防止 setValue 触发 emit 回环
 onMounted(() => {
   if (!editorContainer.value) return
 
-  // Provider 是全局的，注册一次即可
+  // 注册（内部有全局锁，多次调用无副作用）
   registerCompletion()
   registerHover()
 
@@ -244,7 +225,6 @@ onMounted(() => {
     suggestSelection: 'first',
     wordBasedSuggestions: 'currentDocument',
     hover: { above: false, delay: 100 },
-    // 关键：让 hover / 补全浮层不被容器 overflow 裁剪
     fixedOverflowWidgets: true,
     scrollbar: {
       verticalScrollbarSize: 10,
@@ -265,15 +245,11 @@ watch(
   () => props.modelValue,
   (val) => {
     if (!editor || editor.getValue() === val) return
-
-    // 保存光标/选区，setValue 后恢复（否则光标会跳到末尾）
     const pos = editor.getPosition()
     const sel = editor.getSelection()
-
     isSettingValue = true
     editor.setValue(val)
     isSettingValue = false
-
     if (pos) editor.setPosition(pos)
     if (sel) editor.setSelection(sel)
   }
@@ -299,10 +275,8 @@ onBeforeUnmount(() => {
   contentDispose = null
   editor?.dispose()
   editor = null
-  // Provider 是全局的，保留注册（避免多实例 / HMR 场景下反复叠加）
-  // 若确定应用只在一处使用并要彻底释放，可在此：
-  // completionDispose?.dispose(); completionDispose = null
-  // hoverDispose?.dispose();     hoverDispose = null
+  // 注意：不要在这里 dispose completionDispose 和 hoverDispose。
+  // 因为它们是全局单例，只应注册一次。
 })
 </script>
 

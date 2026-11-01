@@ -13,6 +13,9 @@ registerIndicator({
   figures: [],
   calc: (dataList, indicator) => {
     const periods = indicator.calcParams
+    if (periods.length === 0) {
+      periods.push(14) // 默认周期 14
+    }
     const highPrices = dataList.map(item => item.high)
     const lowPrices = dataList.map(item => item.low)
     const closePrices = dataList.map(item => item.close)
@@ -50,6 +53,49 @@ registerIndicator({
       })
     })
 
+    return results
+  }
+})
+registerIndicator({
+  name: 'NATR',
+  shortName: 'NATR',
+  series: 'normal',
+  calcParams: [14],
+  precision: 2,
+  figures: [],
+  calc: (dataList, indicator) => {
+    const periods = indicator.calcParams
+    if (periods.length === 0) {
+      periods.push(14) // 默认周期 14
+    }
+    const highPrices = dataList.map(item => item.high)
+    const lowPrices = dataList.map(item => item.low)
+    const closePrices = dataList.map(item => item.close)
+    const total = dataList.length
+
+    const results = Array(total).fill().map(() => ({}))
+    indicator.figures = []
+    const colors = ['#FFB74D', '#4FC3F7', '#81C784', '#BA68C8', '#FF8A65']
+
+    periods.forEach((period, idx) => {
+      const atrValues = ATR.calculate({ high: highPrices, low: lowPrices, close: closePrices, period })
+      const key = `natr${idx + 1}`
+      
+      indicator.figures.push({ 
+        key: key, 
+        title: `NATR(${period}): `, 
+        type: 'line', 
+        styles: () => ({ color: colors[idx % colors.length], size: 1.5 }) 
+      })
+
+      for (let i = 0; i < atrValues.length; i++) {
+        const actualIndex = period + i
+        if (closePrices[actualIndex] > 0) {
+          // (ATR / Close) * 100，转化为百分比，实现无量纲化
+          results[actualIndex][key] = (atrValues[i] / closePrices[actualIndex]) * 100
+        }
+      }
+    })
     return results
   }
 })
