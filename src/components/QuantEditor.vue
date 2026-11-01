@@ -30,7 +30,6 @@ let hoverDispose: monaco.IDisposable | null = null
 const docCache = new Map<string, Promise<string>>()
 
 function ensureNsCompletions(): Promise<void> {
-  if (nsLoadPromise) return nsLoadPromise
   nsLoadPromise = (async () => {
     try {
       const j = await getPyCodeCompletions()
